@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createGame, createGameAndJoin, joinGame } from "@/lib/api";
 import { getDeviceId, getSavedName, saveName } from "@/lib/identity";
 import Mammoth from "@/components/Mammoth";
+import { HowToPlayButton } from "@/components/HowToPlay";
 
 export default function Home() {
   const router = useRouter();
@@ -69,6 +70,7 @@ export default function Home() {
         <p className="mt-1 text-base font-semibold text-[var(--color-ink)]/70">
           Overleef samen de steentijd 🦣🔥
         </p>
+        <HowToPlayButton className="mt-3" label="📖 Hoe werkt het? / Spelregels" />
       </header>
 
       {error && (

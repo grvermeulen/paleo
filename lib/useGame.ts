@@ -165,7 +165,10 @@ export function useGame(code: string): GameChannel {
   useEffect(() => {
     const gameId = snap.gameId;
     if (!gameId) return;
-    if (snap.status !== "lobby" && snap.status !== "playing") return;
+    // Keep polling while "finished" too: a host can reset back to the lobby from
+    // the win/lose screen, and broadcasts can be missed — this is the fallback
+    // that lets every peer notice the new round.
+    if (snap.status == null) return;
     const inLobby = snap.status === "lobby";
     let active = true;
     let n = 0;

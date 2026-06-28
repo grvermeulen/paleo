@@ -30,6 +30,7 @@ import WinScreen from "@/components/WinScreen";
 import LoseScreen from "@/components/LoseScreen";
 import GameSounds from "@/components/GameSounds";
 import SoundMenu from "@/components/SoundMenu";
+import { HowToPlayButton } from "@/components/HowToPlay";
 
 export default function PlayPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = use(params);
@@ -122,6 +123,16 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
     }
   }
 
+  async function doReplay() {
+    if (!game.gameId) return;
+    try {
+      const v = await resetToLobby(game.gameId);
+      game.notify(v); // broadcast so every phone leaves the win/lose screen
+    } catch {
+      setActErr("Kon niet herstarten — probeer opnieuw.");
+    }
+  }
+
   if (game.loading) return <Centered>Laden…</Centered>;
   if (game.error) return <Centered>{game.error}</Centered>;
 
@@ -168,6 +179,7 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
             Wachten tot de host start…
           </p>
         )}
+        <HowToPlayButton label="📖 Nieuw? Bekijk de uitleg" />
       </main>
     );
   }
@@ -201,9 +213,9 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
 
       {finished ? (
         view.phase === "won" ? (
-          <WinScreen day={view.day} canReplay={isHost} onReplay={() => game.gameId && resetToLobby(game.gameId)} />
+          <WinScreen day={view.day} canReplay={isHost} onReplay={doReplay} />
         ) : (
-          <LoseScreen day={view.day} canReplay={isHost} onReplay={() => game.gameId && resetToLobby(game.gameId)} />
+          <LoseScreen day={view.day} canReplay={isHost} onReplay={doReplay} />
         )
       ) : view.phase === "night" ? (
         <section className="card-pop flex flex-col items-center gap-3 p-5 text-center">
