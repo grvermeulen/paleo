@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+/* ---- Stone-age theme tokens -------------------------------------------- */
+@theme {
+  --color-clay-50: #fbf1e3;
+  --color-clay-100: #f3e1c6;
+  --color-clay-200: #e8cba0;
+  --color-clay-300: #d9ad6f;
+
+  --color-ochre-400: #d98a2b;
+  --color-ochre-500: #c2701c;
+  --color-ochre-600: #9e560f;
+
+  --color-moss-300: #a7bf6a;
+  --color-moss-500: #6f8f3b;
+  --color-moss-600: #56712a;
+
+  --color-stone-300: #b9b1a3;
+  --color-stone-500: #8a8170;
+  --color-stone-700: #5c5547;
+
+  --color-ember: #e2542c;
+  --color-ember-dark: #b53b18;
+  --color-sky-cave: #cfe5ef;
+
+  --color-bone: #f4ecd8;
+  --color-ink: #2c2117;
+
+  --font-display: "Baloo 2", system-ui, sans-serif;
+
+  --shadow-pop: 0 6px 0 rgba(0, 0, 0, 0.22);
+  --radius-blob: 1.3rem;
+}
+
+/* ---- Base -------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-display);
+  color: var(--color-ink);
+  background:
+    radial-gradient(130% 80% at 50% -10%, var(--color-clay-100) 0%, transparent 55%),
+    linear-gradient(180deg, #f6e7cd 0%, #ecd6b0 50%, #d9ad6f 100%);
+  background-attachment: fixed;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+}
+
+/* Faint rock texture overlay for a cave-wall feel. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.5;
+  background-image:
+    radial-gradient(rgba(92, 85, 71, 0.06) 1px, transparent 1.5px),
+    radial-gradient(rgba(92, 85, 71, 0.05) 1px, transparent 1.5px);
+  background-size: 22px 22px, 36px 36px;
+  background-position: 0 0, 11px 7px;
+}
+
+/* Reusable cartoon-stone helpers ----------------------------------------- */
+@layer components {
+  .card-pop {
+    @apply rounded-[var(--radius-blob)] border-4 border-[var(--color-ink)] bg-[var(--color-bone)];
+    box-shadow: var(--shadow-pop);
+    position: relative;
+    z-index: 1;
+  }
+
+  .btn-pop {
+    @apply inline-flex items-center justify-center gap-2 rounded-full border-4 border-[var(--color-ink)] px-6 py-3 text-lg font-extrabold text-[var(--color-ink)] transition-transform;
+    box-shadow: 0 5px 0 rgba(0, 0, 0, 0.26);
+    position: relative;
+    z-index: 1;
+  }
+  .btn-pop:active {
+    transform: translateY(4px);
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.26);
+  }
+  .btn-pop:disabled {
+    @apply cursor-not-allowed opacity-50;
+    transform: none;
+  }
+
+  .text-stroke {
+    -webkit-text-stroke: 2px var(--color-ink);
+    paint-order: stroke fill;
+  }
+}
+
+/* Fun keyframes ---------------------------------------------------------- */
+@keyframes wiggle {
+  0%, 100% { transform: rotate(-4deg); }
+  50% { transform: rotate(4deg); }
+}
+@keyframes bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-7px); }
+}
+@keyframes flicker {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.78; transform: scale(0.94); }
+}
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(194, 112, 28, 0.6); }
+  70% { box-shadow: 0 0 0 16px rgba(194, 112, 28, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(194, 112, 28, 0); }
+}
+.anim-wiggle { animation: wiggle 1.4s ease-in-out infinite; }
+.anim-bob { animation: bob 2s ease-in-out infinite; }
+.anim-flicker { animation: flicker 1.1s ease-in-out infinite; }
+.anim-turn { animation: pulse-ring 1.6s ease-out infinite; }
