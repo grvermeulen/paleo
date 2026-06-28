@@ -1,0 +1,25 @@
+{
+  "name": "Paleo 🦣",
+  "short_name": "Paleo",
+  "description": "Overleef samen de steentijd. Laptop als grot-bord, telefoons als controller.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ecd6b0",
+  "theme_color": "#c2701c",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
