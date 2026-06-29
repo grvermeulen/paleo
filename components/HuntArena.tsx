@@ -25,7 +25,7 @@ import Mammoth from "./Mammoth";
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 const rollDie = () => 1 + Math.floor(Math.random() * 6);
 
-function preyVisual(cardId: string) {
+function preyVisual(cardId: string): string | null {
   switch (cardId) {
     case "hert":
       return "🦌";
@@ -33,8 +33,18 @@ function preyVisual(cardId: string) {
       return "🐗";
     case "wolven":
       return "🐺";
+    case "sabeltand":
+      return "🐯";
+    case "holenbeer":
+      return "🐻";
+    case "vleermuizen":
+      return "🦇";
+    case "grot":
+      return "🕳️";
+    case "mammoet":
+      return null; // the one prey that gets the hand-drawn SVG
     default:
-      return null; // mammoet → SVG
+      return "🐾"; // generic quarry — never the mammoth
   }
 }
 
@@ -151,7 +161,9 @@ export default function HuntArena({
       {/* Header */}
       <div className="flex items-center justify-between gap-2 px-4 py-2 text-white" style={{ backgroundColor: accent }}>
         <h3 className="text-stroke text-lg font-extrabold">🎲 Jacht: {card.title}</h3>
-        <span className="text-sm font-bold">kracht {W}</span>
+        <span className="text-sm font-bold" title="Gevechtskracht van je meegenomen werktuigen">
+          ⚔️ jouw kracht {W}
+        </span>
       </div>
 
       <div className="flex flex-col gap-3 p-4">
@@ -166,6 +178,9 @@ export default function HuntArena({
           >
             {preyVisual(hunt.cardId) ?? <Mammoth className="h-20 w-24" />}
           </motion.div>
+          <span className="rounded-full border-2 border-[var(--color-ink)] bg-[var(--color-ember)]/15 px-2 py-0.5 text-xs font-extrabold text-[var(--color-ember-dark)]">
+            {card.title} · kracht {F}
+          </span>
           <HpBar value={hunt.preyHp} max={hunt.preyMaxHp} color="var(--color-ember)" label="Prooi" />
         </div>
 
