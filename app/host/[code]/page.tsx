@@ -2,7 +2,7 @@
 
 import { use, useEffect, useMemo, useState } from "react";
 import { useGame } from "@/lib/useGame";
-import { startGame, advanceNight, resetToLobby } from "@/lib/api";
+import { startGame, advanceNight, resetToLobby, applyAction } from "@/lib/api";
 import { getDeviceId } from "@/lib/identity";
 import { accentFor } from "@/lib/paleo/colors";
 import Mammoth from "@/components/Mammoth";
@@ -17,6 +17,7 @@ import LoseScreen from "@/components/LoseScreen";
 import GameSounds from "@/components/GameSounds";
 import SoundMenu from "@/components/SoundMenu";
 import { HowToPlayButton } from "@/components/HowToPlay";
+import HuntArena from "@/components/HuntArena";
 
 export default function HostPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = use(params);
@@ -64,6 +65,24 @@ export default function HostPage({ params }: { params: Promise<{ code: string }>
       game.notify(v);
     } finally {
       setBusy(false);
+    }
+  }
+
+  // The host can roll for the player whose turn it is when they're disconnected,
+  // so a dropped phone never stalls the shared hunt.
+  async function hostRoll(dice: [number, number]) {
+    const h = game.state?.hunt;
+    if (!game.gameId || !h) return;
+    try {
+      const v = await applyAction(game.gameId, {
+        type: "HUNT_ROLL",
+        playerId: h.order[h.turn],
+        seq: h.seq,
+        dice,
+      });
+      game.notify(v);
+    } catch {
+      /* a version race just means another device rolled first */
     }
   }
 
@@ -191,6 +210,16 @@ export default function HostPage({ params }: { params: Promise<{ code: string }>
             <ToolShelf tools={state.tools} />
             <SkullTrack skulls={state.skulls} limit={state.skullLimit} size="lg" />
           </div>
+
+          {state.hunt && (
+            <HuntArena
+              state={state}
+              meId={meId}
+              connected={connected}
+              isHost={isHost}
+              onRoll={hostRoll}
+            />
+          )}
 
           {state.phase === "night" && (
             <section className="card-pop flex w-full max-w-md flex-col items-center gap-3 p-5 text-center">

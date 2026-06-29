@@ -60,7 +60,10 @@ export type EventKind =
   | "night"
   | "dawn"
   | "win"
-  | "lose";
+  | "lose"
+  // Per-roll cues during a shared dice hunt (synced so spectators hear them).
+  | "hit"
+  | "dodge";
 
 export interface GameEvent {
   kind: EventKind;
@@ -71,6 +74,29 @@ export interface GameEvent {
 export interface LogEntry {
   day: number;
   text: string;
+}
+
+/** An in-progress shared dice hunt: players take turns rolling against a prey. */
+export interface HuntState {
+  cardId: string;
+  optionIndex: number;
+  initiatorId: string;
+  preyHp: number;
+  preyMaxHp: number;
+  tribeHp: number; // shared "stamina" for this fight
+  tribeMaxHp: number;
+  order: string[]; // player ids in turn order (initiator first)
+  turn: number; // index into order
+  step: "attack" | "dodge";
+  seq: number; // monotonic — orders rolls and makes them idempotent/retry-safe
+  lastRoll?: {
+    by: string;
+    kind: "attack" | "dodge";
+    dice: [number, number];
+    total: number;
+    ok: boolean;
+    dmg?: number;
+  };
 }
 
 export interface GameState {
@@ -90,6 +116,8 @@ export interface GameState {
   day: number;
   log: LogEntry[];
   lastEvent: GameEvent | null;
+  /** Set while a shared dice hunt is in progress (takes over the UI). */
+  hunt?: HuntState;
 }
 
 export type Action =
@@ -101,6 +129,11 @@ export type Action =
   // every peer reduces to the same state — exactly like deck shuffles, the
   // skill/chance lives in the caller and only the result rides the action.
   | { type: "RESOLVE_HUNT"; playerId: string; optionIndex: number; outcome: "win" | "lose" }
+  // Shared dice hunt: START opens it, ROLL is one player's turn (the two dice
+  // ride the action so every peer reduces identically), FLEE aborts it early.
+  | { type: "START_HUNT"; playerId: string; optionIndex: number }
+  | { type: "HUNT_ROLL"; playerId: string; seq: number; dice: [number, number] }
+  | { type: "HUNT_FLEE"; playerId: string }
   | { type: "GIVE_UP"; playerId: string }
   | { type: "ADVANCE_NIGHT"; decks: string[][] }
   | { type: "RESET" };
@@ -178,6 +211,23 @@ export function createLobbyState(missionId: string = DEFAULT_MISSION.id): GameSt
 export function weaponStrength(state: GameState): number {
   return state.tools.reduce((s, t) => s + (TOOLS[t]?.strength ?? 0), 0);
 }
+
+// ---- Dice-hunt tuning (exported so the UI can show the same math) ----------
+// 2d6 per roll. Attack adds your weapons and subtracts prey strength (low stats
+// → minpunten); you must reach HIT to wound it. Dodge adds your tribe size and
+// must reach 6 + prey strength. Tuned "pittig": weak stats fail often.
+export const HUNT_HIT = 7;
+export const HUNT_CRIT = 11;
+export const huntPreyMaxHp = (fight: number) => 2 + fight;
+export const huntTribeMaxHp = (tribe: number) => 3 + tribe;
+export const huntDodgeTarget = (fight: number) => 6 + fight;
+export const huntBite = (fight: number) => Math.max(1, Math.ceil(fight / 2));
+export const huntAttackTotal = (dice: [number, number], strength: number, fight: number) =>
+  dice[0] + dice[1] + strength - fight;
+export const huntAttackDamage = (total: number) =>
+  total >= HUNT_CRIT ? 2 : total >= HUNT_HIT ? 1 : 0;
+export const huntDodgeTotal = (dice: [number, number], tribe: number) =>
+  dice[0] + dice[1] + tribe;
 
 /** The top-3 card instances a player may choose between this turn. */
 export function offer(player: PaleoPlayer): string[] {
@@ -329,6 +379,53 @@ function pushLog(state: GameState, text: string): LogEntry[] {
   return [...state.log.slice(-40), { day: state.day, text }];
 }
 
+/** Clear an in-progress hunt and discard the initiator's hunt card. */
+function closeHunt(state: GameState, hunt: HuntState): GameState {
+  const initiator = state.players.find((p) => p.id === hunt.initiatorId);
+  const players = state.players.map((p) =>
+    p.id === hunt.initiatorId ? { ...p, active: null } : p,
+  );
+  const discard = initiator?.active
+    ? [...state.discard, initiator.active]
+    : [...state.discard];
+  return { ...state, players, discard, hunt: undefined };
+}
+
+/**
+ * Apply a hunt's win reward or lose penalty onto `base` (active already cleared,
+ * hunt already closed). Shared by RESOLVE_HUNT (quick-resolve) and the dice hunt
+ * so both paths grant/penalise identically. Caller runs settle/night after.
+ */
+function applyHuntOutcome(
+  base: GameState,
+  opt: CardOption,
+  outcome: "win" | "lose",
+  byId: string,
+  byName: string,
+  title: string,
+): GameState {
+  if (outcome === "win") {
+    const a = grantReward(base, opt.reward);
+    return {
+      ...base,
+      stock: payCost(a.stock, opt.cost),
+      tools: a.tools,
+      tribe: a.tribe,
+      painting: a.painting,
+      lastEvent: { kind: opt.reward?.painting ? "paint" : "hunt", by: byId },
+      log: pushLog(base, `🗡️ ${byName}: ${title} — gevangen!`),
+    };
+  }
+  // A fumble always costs ≥1; a strong tribe stays low-risk.
+  const wound = Math.max(1, (opt.fight ?? 1) - weaponStrength(base));
+  return {
+    ...base,
+    skulls: base.skulls + wound,
+    lastEvent: { kind: "fail", by: byId },
+    log: pushLog(base, `💢 ${byName}: ${title} — ontsnapt! → ${wound} 💀.`),
+  };
+}
+
 /** Feed the tribe and resolve night cards; advance to the `night` phase. */
 function enterNight(state: GameState): GameState {
   let skulls = state.skulls;
@@ -411,6 +508,7 @@ export function reduce(state: GameState, action: Action): GameState {
 
     case "PICK": {
       if (state.status !== "playing" || state.phase !== "day") return state;
+      if (state.hunt) return state; // paused while a shared hunt runs
       const player = findPlayer(state, action.playerId);
       if (!player) return state;
       if (player.active !== null) return state; // already holding a card
@@ -446,6 +544,7 @@ export function reduce(state: GameState, action: Action): GameState {
 
     case "RESOLVE": {
       if (state.status !== "playing" || state.phase !== "day") return state;
+      if (state.hunt) return state; // paused while a shared hunt runs
       const player = findPlayer(state, action.playerId);
       if (!player || player.active === null) return state;
       const card = cardOf(player.active);
@@ -517,9 +616,10 @@ export function reduce(state: GameState, action: Action): GameState {
     }
 
     case "RESOLVE_HUNT": {
-      // Same shape as RESOLVE's fight branch, but the win/lose verdict comes
-      // from the mini-game on the player's phone instead of the strength check.
+      // Quick-resolve path: the carried outcome (from the toggle / reduced
+      // motion) is applied directly, no dice arena.
       if (state.status !== "playing" || state.phase !== "day") return state;
+      if (state.hunt) return state; // a shared hunt is already running
       if (action.outcome !== "win" && action.outcome !== "lose") return state;
       const player = findPlayer(state, action.playerId);
       if (!player || player.active === null) return state;
@@ -528,38 +628,146 @@ export function reduce(state: GameState, action: Action): GameState {
       if (!opt || opt.fight == null) return state; // only fight options hunt
       if (!optionStatus(state, card, opt).playable) return state;
 
-      const discardCard = player.active;
-      const players = state.players.map((p) =>
-        p.id === player.id ? { ...p, active: null } : p,
-      );
-      let next: GameState = {
+      const base: GameState = {
         ...state,
-        players,
-        discard: [...state.discard, discardCard],
+        players: state.players.map((p) =>
+          p.id === player.id ? { ...p, active: null } : p,
+        ),
+        discard: [...state.discard, player.active],
+      };
+      let next = applyHuntOutcome(base, opt, action.outcome, player.id, player.name, card.title);
+      next = settle(next);
+      if (isFinished(next)) return next;
+      return maybeEnterNight(next);
+    }
+
+    case "START_HUNT": {
+      if (state.status !== "playing" || state.phase !== "day") return state;
+      if (state.hunt) return state; // one hunt at a time
+      const player = findPlayer(state, action.playerId);
+      if (!player || player.active === null) return state;
+      const card = cardOf(player.active);
+      const opt = card.options[action.optionIndex];
+      if (!opt || opt.fight == null) return state;
+      if (!optionStatus(state, card, opt).playable) return state;
+
+      // Turn order = all players, initiator first.
+      const ids = state.players.map((p) => p.id);
+      const start = Math.max(0, ids.indexOf(player.id));
+      const order = [...ids.slice(start), ...ids.slice(0, start)];
+      return {
+        ...state,
+        hunt: {
+          cardId: card.id,
+          optionIndex: action.optionIndex,
+          initiatorId: player.id,
+          preyHp: huntPreyMaxHp(opt.fight),
+          preyMaxHp: huntPreyMaxHp(opt.fight),
+          tribeHp: huntTribeMaxHp(state.tribe),
+          tribeMaxHp: huntTribeMaxHp(state.tribe),
+          order,
+          turn: 0,
+          step: "attack",
+          seq: 0,
+        },
+        lastEvent: { kind: "danger", by: player.id },
+        log: pushLog(state, `⚔️ ${player.name} begint de jacht op ${card.title}.`),
+      };
+    }
+
+    case "HUNT_ROLL": {
+      const hunt = state.hunt;
+      if (!hunt) return state;
+      if (action.seq !== hunt.seq) return state; // stale / duplicate roll
+      if (action.playerId !== hunt.order[hunt.turn]) return state; // not your turn
+      const d = action.dice;
+      if (!Array.isArray(d) || d.length !== 2) return state;
+
+      const card = cardOf(`${hunt.cardId}#0`);
+      const opt = card.options[hunt.optionIndex];
+      if (!opt || opt.fight == null) return state;
+      const F = opt.fight;
+      const roller = findPlayer(state, action.playerId);
+      const name = roller?.name ?? "Speler";
+
+      const closeWith = (outcome: "win" | "lose"): GameState => {
+        let next = applyHuntOutcome(closeHunt(state, hunt), opt, outcome, action.playerId, name, card.title);
+        next = settle(next);
+        if (isFinished(next)) return next;
+        return maybeEnterNight(next);
       };
 
-      if (action.outcome === "win") {
-        const a = grantReward(next, opt.reward);
-        next = {
-          ...next,
-          stock: payCost(a.stock, opt.cost),
-          tools: a.tools,
-          tribe: a.tribe,
-          painting: a.painting,
-          lastEvent: { kind: opt.reward?.painting ? "paint" : "hunt", by: player.id },
-          log: pushLog(state, `🗡️ ${player.name}: ${card.title} — gevangen!`),
-        };
-      } else {
-        // A fumble always costs ≥1 (a strong tribe stays low-risk, never free).
-        const wound = Math.max(1, opt.fight - weaponStrength(state));
-        next = {
-          ...next,
-          skulls: state.skulls + wound,
-          lastEvent: { kind: "fail", by: player.id },
-          log: pushLog(state, `💢 ${player.name}: ${card.title} — ontsnapt! → ${wound} 💀.`),
+      if (hunt.step === "attack") {
+        const total = huntAttackTotal(d, weaponStrength(state), F);
+        const dmg = huntAttackDamage(total);
+        const preyHp = Math.max(0, hunt.preyHp - dmg);
+        if (preyHp <= 0) return closeWith("win");
+        return {
+          ...state,
+          hunt: {
+            ...hunt,
+            preyHp,
+            step: "dodge",
+            seq: hunt.seq + 1,
+            lastRoll: { by: action.playerId, kind: "attack", dice: d, total, ok: dmg > 0, dmg },
+          },
+          lastEvent: { kind: dmg > 0 ? "hit" : "pick", by: action.playerId },
+          log: pushLog(
+            state,
+            dmg > 0
+              ? `🎲 ${name} gooit ${d[0]}+${d[1]} → raak! prooi −${dmg}`
+              : `🎲 ${name} gooit ${d[0]}+${d[1]} → mis`,
+          ),
         };
       }
 
+      // dodge step
+      const total = huntDodgeTotal(d, state.tribe);
+      const ok = total >= huntDodgeTarget(F);
+      const nextTurn = (hunt.turn + 1) % hunt.order.length;
+      if (!ok) {
+        const bite = huntBite(F);
+        const tribeHp = Math.max(0, hunt.tribeHp - bite);
+        if (tribeHp <= 0) return closeWith("lose");
+        return {
+          ...state,
+          hunt: {
+            ...hunt,
+            tribeHp,
+            turn: nextTurn,
+            step: "attack",
+            seq: hunt.seq + 1,
+            lastRoll: { by: action.playerId, kind: "dodge", dice: d, total, ok: false, dmg: bite },
+          },
+          lastEvent: { kind: "hit", by: action.playerId },
+          log: pushLog(state, `🎲 ${name} gooit ${d[0]}+${d[1]} → geraakt! stam −${bite}`),
+        };
+      }
+      return {
+        ...state,
+        hunt: {
+          ...hunt,
+          turn: nextTurn,
+          step: "attack",
+          seq: hunt.seq + 1,
+          lastRoll: { by: action.playerId, kind: "dodge", dice: d, total, ok: true },
+        },
+        lastEvent: { kind: "dodge", by: action.playerId },
+        log: pushLog(state, `🎲 ${name} ontwijkt (${d[0]}+${d[1]})`),
+      };
+    }
+
+    case "HUNT_FLEE": {
+      const hunt = state.hunt;
+      if (!hunt) return state;
+      if (action.playerId !== hunt.initiatorId) return state;
+      if (hunt.seq !== 0) return state; // only before the first roll
+      let next = closeHunt(state, hunt);
+      next = {
+        ...next,
+        lastEvent: { kind: "pick", by: hunt.initiatorId },
+        log: pushLog(next, `🏃 ${findPlayer(state, hunt.initiatorId)?.name ?? "Speler"} blaast de jacht af.`),
+      };
       next = settle(next);
       if (isFinished(next)) return next;
       return maybeEnterNight(next);
@@ -567,6 +775,7 @@ export function reduce(state: GameState, action: Action): GameState {
 
     case "GIVE_UP": {
       if (state.status !== "playing" || state.phase !== "day") return state;
+      if (state.hunt) return state; // paused while a shared hunt runs
       const player = findPlayer(state, action.playerId);
       if (!player || player.active === null) return state;
       const card = cardOf(player.active);

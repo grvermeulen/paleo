@@ -171,6 +171,152 @@ describe("hunting mini-game (RESOLVE_HUNT)", () => {
   });
 });
 
+describe("shared dice hunt (START_HUNT / HUNT_ROLL / HUNT_FLEE)", () => {
+  // Dice ride the action so the reducer is fully deterministic.
+  function startHunt(decks: string[][], opts?: { tools?: ("speer" | "knots" | "bijl")[] }): GameState {
+    let s = startGame(decks);
+    if (opts?.tools) s = { ...s, tools: opts.tools };
+    s = reduce(s, { type: "PICK", playerId: "p0", cardId: decks[0][0] });
+    return reduce(s, { type: "START_HUNT", playerId: "p0", optionIndex: 0 });
+  }
+
+  it("START_HUNT opens a shared hunt (initiator first in turn order)", () => {
+    const s = startHunt([["hert#0", "vlakte#1"], ["rivier#2"]]); // hert F2, tribe 2
+    expect(s.hunt).toBeTruthy();
+    expect(s.hunt!.preyHp).toBe(4); // 2 + F
+    expect(s.hunt!.tribeHp).toBe(5); // 3 + tribe
+    expect(s.hunt!.order).toEqual(["p0", "p1"]);
+    expect(s.hunt!.turn).toBe(0);
+    expect(s.hunt!.step).toBe("attack");
+    expect(s.players[0].active).toBe("hert#0"); // card stays until the hunt ends
+  });
+
+  it("an attack hit lowers prey HP, then it becomes the dodge step", () => {
+    let s = startHunt([["hert#0", "vlakte#1"]]);
+    s = reduce(s, { type: "HUNT_ROLL", playerId: "p0", seq: 0, dice: [5, 5] }); // 10 + 0 − 2 = 8 ≥ 7
+    expect(s.hunt!.preyHp).toBe(3);
+    expect(s.hunt!.step).toBe("dodge");
+    expect(s.hunt!.seq).toBe(1);
+    expect(s.hunt!.lastRoll).toMatchObject({ kind: "attack", ok: true, dmg: 1 });
+  });
+
+  it("a miss deals no damage but still leads into the dodge", () => {
+    let s = startHunt([["hert#0", "vlakte#1"]]);
+    s = reduce(s, { type: "HUNT_ROLL", playerId: "p0", seq: 0, dice: [1, 1] }); // 2 − 2 = 0
+    expect(s.hunt!.preyHp).toBe(4);
+    expect(s.hunt!.step).toBe("dodge");
+  });
+
+  it("a critical roll (≥11) deals 2 damage with weapons", () => {
+    let s = startHunt([["hert#0", "vlakte#1"]], { tools: ["speer"] }); // W 2
+    s = reduce(s, { type: "HUNT_ROLL", playerId: "p0", seq: 0, dice: [6, 6] }); // 12 + 2 − 2 = 12
+    expect(s.hunt!.preyHp).toBe(2);
+  });
+
+  it("killing the prey wins the hunt and grants the reward", () => {
+    let s = startHunt([["hert#0", "vlakte#1"]]);
+    s = { ...s, hunt: { ...s.hunt!, preyHp: 1 } };
+    const foodBefore = s.stock.food;
+    s = reduce(s, { type: "HUNT_ROLL", playerId: "p0", seq: 0, dice: [5, 5] });
+    expect(s.hunt).toBeUndefined();
+    expect(s.stock.food).toBe(foodBefore + 3);
+    expect(s.players[0].active).toBeNull();
+    expect(s.lastEvent?.kind).toBe("hunt");
+  });
+
+  it("a failed dodge wounds the shared tribe HP and passes the turn", () => {
+    let s = startHunt([["hert#0", "vlakte#1"]]);
+    s = { ...s, hunt: { ...s.hunt!, step: "dodge", seq: 1 } };
+    s = reduce(s, { type: "HUNT_ROLL", playerId: "p0", seq: 1, dice: [1, 1] }); // 2 + 2 = 4 < 8
+    expect(s.hunt!.tribeHp).toBe(4); // 5 − bite(1)
+    expect(s.hunt!.step).toBe("attack");
+  });
+
+  it("losing all tribe HP fails the hunt and adds skulls", () => {
+    let s = startHunt([["zwijn#0", "vlakte#1"]]); // F3, bite 2
+    s = { ...s, hunt: { ...s.hunt!, step: "dodge", seq: 1, tribeHp: 1 } };
+    s = reduce(s, { type: "HUNT_ROLL", playerId: "p0", seq: 1, dice: [1, 1] });
+    expect(s.hunt).toBeUndefined();
+    expect(s.skulls).toBe(3); // penalty max(1, F − W) = max(1, 3 − 0)
+    expect(s.lastEvent?.kind).toBe("fail");
+  });
+
+  it("rolls rotate the turn between players", () => {
+    let s = startHunt([["hert#0", "vlakte#1"], ["rivier#2"]]);
+    s = reduce(s, { type: "HUNT_ROLL", playerId: "p0", seq: 0, dice: [1, 1] }); // attack → dodge
+    expect(s.hunt!.turn).toBe(0);
+    s = reduce(s, { type: "HUNT_ROLL", playerId: "p0", seq: 1, dice: [6, 6] }); // dodge ok → next
+    expect(s.hunt!.turn).toBe(1);
+    expect(s.hunt!.order[s.hunt!.turn]).toBe("p1");
+    expect(s.hunt!.step).toBe("attack");
+  });
+
+  it("guards stale seq, wrong player, and rolls with no hunt", () => {
+    const s = startHunt([["hert#0", "vlakte#1"]]);
+    expect(reduce(s, { type: "HUNT_ROLL", playerId: "p0", seq: 9, dice: [5, 5] })).toBe(s);
+    expect(reduce(s, { type: "HUNT_ROLL", playerId: "pX", seq: 0, dice: [5, 5] })).toBe(s);
+    const ng = startGame([["hert#0"]]);
+    expect(reduce(ng, { type: "HUNT_ROLL", playerId: "p0", seq: 0, dice: [5, 5] })).toBe(ng);
+  });
+
+  it("FLEE aborts before the first roll, but not after", () => {
+    let s = startHunt([["hert#0", "vlakte#1"]]);
+    const fled = reduce(s, { type: "HUNT_FLEE", playerId: "p0" });
+    expect(fled.hunt).toBeUndefined();
+    expect(fled.skulls).toBe(0);
+    expect(fled.players[0].active).toBeNull();
+
+    s = reduce(s, { type: "HUNT_ROLL", playerId: "p0", seq: 0, dice: [1, 1] }); // seq → 1
+    expect(reduce(s, { type: "HUNT_FLEE", playerId: "p0" })).toBe(s);
+  });
+
+  it("pauses normal day actions while a hunt runs", () => {
+    const m = startHunt([["hert#0", "vlakte#1"], ["rivier#2"]]);
+    expect(reduce(m, { type: "PICK", playerId: "p1", cardId: "rivier#2" })).toBe(m);
+  });
+
+  it("a hunt win that fills the wall finishes the game", () => {
+    let s = startHunt([["mammoet#0"]]); // F4, requires tribe 2 (default)
+    s = { ...s, painting: 4, hunt: { ...s.hunt!, preyHp: 1 } };
+    s = reduce(s, { type: "HUNT_ROLL", playerId: "p0", seq: 0, dice: [6, 6] }); // 12 − 4 = 8 ≥ 7
+    expect(s.painting).toBe(5);
+    expect(s.phase).toBe("won");
+    expect(s.status).toBe("finished");
+  });
+
+  // Difficulty smoke test: stats AND luck should both matter ("pittig").
+  it("is harder with weak stats and against stronger prey", () => {
+    const die = (r: () => number) => 1 + Math.floor(r() * 6);
+    function winRate(prey: string, tools: ("speer" | "knots" | "bijl")[] | undefined, n: number): number {
+      let seed = 98765;
+      const rng = () => ((seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296);
+      let wins = 0;
+      for (let i = 0; i < n; i++) {
+        let s = startHunt([[`${prey}#0`, "vlakte#1"]], tools ? { tools } : undefined);
+        let guard = 0;
+        while (s.hunt && guard++ < 1000) {
+          const pid = s.hunt.order[s.hunt.turn];
+          s = reduce(s, { type: "HUNT_ROLL", playerId: pid, seq: s.hunt.seq, dice: [die(rng), die(rng)] });
+        }
+        if (s.lastEvent?.kind !== "fail") wins++;
+      }
+      return wins / n;
+    }
+
+    const N = 300;
+    const armedHert = winRate("hert", ["speer"], N); // strong tribe, weak prey
+    const barehandHert = winRate("hert", undefined, N);
+    const barehandMammoet = winRate("mammoet", undefined, N); // weak tribe, strong prey
+
+    // Stats matter, and stronger prey is harder:
+    expect(armedHert).toBeGreaterThan(barehandHert);
+    expect(barehandHert).toBeGreaterThan(barehandMammoet);
+    // ...and the extremes land where you'd expect (loose bounds, seeded):
+    expect(armedHert).toBeGreaterThan(0.45); // achievable with the right kit
+    expect(barehandMammoet).toBeLessThan(0.45); // genuinely punishing unarmed
+  });
+});
+
 describe("painting & win", () => {
   it("painting needs a torch", () => {
     let s = startGame([["rotswand#0"]]);
