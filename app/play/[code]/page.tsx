@@ -4,7 +4,9 @@ import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useGame } from "@/lib/useGame";
 import {
   applyAction,
-  advanceNight,
+  startNight,
+  startDay,
+  selectCarry,
   startGame,
   joinGame,
   resetToLobby,
@@ -38,6 +40,8 @@ import WinScreen from "@/components/WinScreen";
 import LoseScreen from "@/components/LoseScreen";
 import HuntArena from "@/components/HuntArena";
 import DifficultyPicker from "@/components/DifficultyPicker";
+import CarryScreen from "@/components/CarryScreen";
+import type { ToolId } from "@/lib/paleo/cards";
 import GameSounds from "@/components/GameSounds";
 import SoundMenu from "@/components/SoundMenu";
 import { HowToPlayButton } from "@/components/HowToPlay";
@@ -122,7 +126,8 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
     [view, meId],
   );
   const offer = myPlayer && !myPlayer.active ? myPlayer.deck.slice(0, 3) : [];
-  const canPick = !!myPlayer && !myPlayer.active && offer.length > 0 && view?.phase === "day";
+  const isRound = view?.phase === "day" || view?.phase === "night";
+  const canPick = !!myPlayer && !myPlayer.active && offer.length > 0 && isRound && !view?.transition;
 
   // Shake to pick a random card from the current offer.
   const shake = useShake(() => {
@@ -130,13 +135,19 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
     pickCard(offer[Math.floor(Math.random() * offer.length)]);
   }, canPick);
 
-  async function doNextDay() {
-    if (!game.gameId) return;
+  // Confirm a day↔night transition: carry the chosen tools, then deal the round.
+  async function confirmTransition(tools: ToolId[]) {
+    const to = view?.transition?.to;
+    if (!game.gameId || !to) return;
     try {
-      const v = await advanceNight(game.gameId);
+      if (tools.length) {
+        const v0 = await selectCarry(game.gameId, tools);
+        game.notify(v0);
+      }
+      const v = to === "night" ? await startNight(game.gameId) : await startDay(game.gameId);
       game.notify(v);
     } catch {
-      setActErr("Kon de nacht niet doorlopen.");
+      setActErr("Kon de ronde niet starten.");
     }
   }
 
@@ -290,21 +301,8 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
         ) : (
           <LoseScreen day={view.day} canReplay={isHost} onReplay={doReplay} />
         )
-      ) : view.phase === "night" ? (
-        <section className="card-pop flex flex-col items-center gap-3 p-5 text-center">
-          <span className="text-4xl anim-flicker" aria-hidden>
-            🌙🔥
-          </span>
-          <h2 className="text-xl font-extrabold">Nacht {view.day}</h2>
-          <ul className="text-sm font-semibold text-[var(--color-stone-700)]">
-            {view.log.filter((l) => l.day === view.day).slice(-4).map((l, i) => (
-              <li key={i}>{l.text}</li>
-            ))}
-          </ul>
-          <button onClick={doNextDay} className="btn-pop bg-[var(--color-ochre-400)] text-white">
-            ☀️ Begin dag {view.day + 1}
-          </button>
-        </section>
+      ) : view.transition ? (
+        <CarryScreen state={view} isHost={isHost} onConfirm={confirmTransition} />
       ) : view.hunt ? (
         <HuntArena state={view} meId={meId} isHost={isHost} onRoll={rollHunt} onFlee={fleeHunt} onDismiss={dismissHunt} />
       ) : !myPlayer ? (

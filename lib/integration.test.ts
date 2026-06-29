@@ -134,7 +134,8 @@ import {
   joinGame,
   startGame,
   applyAction,
-  advanceNight,
+  startNight,
+  startDay,
   resetToLobby,
 } from "./api";
 import {
@@ -230,8 +231,10 @@ describe("integration: full game through the api layer", () => {
       const s = currentState();
       if (s.status === "finished") break;
 
-      if (s.phase === "night") {
-        await advanceNight(gameId);
+      // Confirm a day↔night transition (carry the tools we already have).
+      if (s.transition) {
+        if (s.transition.to === "night") await startNight(gameId);
+        else await startDay(gameId);
         continue;
       }
 
@@ -279,26 +282,26 @@ describe("integration: full game through the api layer", () => {
     );
   });
 
-  it("advanceNight deals a fresh day via the api layer", async () => {
-    // Build a state that has reached the night phase (decks emptied).
+  it("startNight deals the night deck via the api layer", async () => {
+    // Build a state that has reached the night transition (day decks emptied).
     let s = createLobbyState();
     s = { ...s, players: [{ id: "p1", name: "Oeg", deck: [], active: null }] };
     s = reduce(s, { type: "START", decks: [["vlakte#0"]] });
     s = reduce(s, { type: "PICK", playerId: "p1", cardId: "vlakte#0" });
     s = reduce(s, { type: "RESOLVE", playerId: "p1", optionIndex: 0 });
     expect(s.phase).toBe("night");
+    expect(s.transition).toEqual({ to: "night" });
 
     store.paleo_games = [
       { id: "g1", code: "NGHT", status: s.status, state: s, version: 5 },
     ];
 
-    const v = await advanceNight("g1");
+    const v = await startNight("g1");
     expect(v).toBe(6);
     const after = store.paleo_games[0].state as GameState;
-    expect(after.phase).toBe("day");
-    expect(after.day).toBe(2);
-    // The resolved card was reshuffled back into the new day's deck.
-    expect(after.players[0].deck).toEqual(["vlakte#0"]);
+    expect(after.phase).toBe("night");
+    expect(after.transition).toBeUndefined();
+    expect(after.players[0].deck.length).toBeGreaterThan(0); // night deck dealt
     expect(store.paleo_games[0].version).toBe(6);
   });
 

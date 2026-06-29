@@ -37,6 +37,7 @@ export interface Stock {
   flint: number;
   food: number;
   ideas: number;
+  bones: number; // night-only resource, gathered in the night round
 }
 
 export interface PaleoPlayer {
@@ -110,7 +111,9 @@ export interface GameState {
   phase: Phase;
   missionId: string;
   stock: Stock;
-  tools: ToolId[];
+  tools: ToolId[]; // every tool the tribe owns (knows how to use)
+  /** The carried subset (≤ CARRY_MAX) that counts for combat strength. */
+  activeTools: ToolId[];
   tribe: number;
   skulls: number;
   painting: number;
@@ -126,7 +129,12 @@ export interface GameState {
   difficulty: Difficulty;
   /** Set while a shared dice hunt is in progress (takes over the UI). */
   hunt?: HuntState;
+  /** Set during a day↔night transition: pick which tools to carry. */
+  transition?: { to: "night" | "day" };
 }
+
+/** Max number of tools you can carry (count toward combat) at once. */
+export const CARRY_MAX = 4;
 
 export type Action =
   | { type: "START"; decks: string[][] }
@@ -145,7 +153,11 @@ export type Action =
   | { type: "HUNT_DISMISS"; playerId: string }
   | { type: "SET_DIFFICULTY"; difficulty: Difficulty }
   | { type: "GIVE_UP"; playerId: string }
-  | { type: "ADVANCE_NIGHT"; decks: string[][] }
+  // Day↔night cycle: pick which tools to carry across a transition, then start
+  // the next round (decks dealt caller-side from the right pool).
+  | { type: "SELECT_CARRY"; tools: ToolId[] }
+  | { type: "START_NIGHT"; decks: string[][] }
+  | { type: "START_DAY"; decks: string[][] }
   | { type: "RESET" };
 
 // ---------------------------------------------------------------------------
@@ -200,6 +212,7 @@ export function createLobbyState(missionId: string = DEFAULT_MISSION.id): GameSt
     missionId: m.id,
     stock: { ...m.startStock },
     tools: [],
+    activeTools: [],
     tribe: m.startTribe,
     skulls: 0,
     painting: 0,
@@ -220,7 +233,13 @@ export function createLobbyState(missionId: string = DEFAULT_MISSION.id): GameSt
 // ---------------------------------------------------------------------------
 
 export function weaponStrength(state: GameState): number {
-  return state.tools.reduce((s, t) => s + (TOOLS[t]?.strength ?? 0), 0);
+  // Only carried tools count; by night fire & torch shine (nightStrength).
+  const night = state.phase === "night";
+  return state.activeTools.reduce((s, t) => {
+    const tool = TOOLS[t];
+    if (!tool) return s;
+    return s + (night ? tool.nightStrength ?? tool.strength : tool.strength);
+  }, 0);
 }
 
 // ---- Dice-hunt tuning (exported so the UI can show the same math) ----------
@@ -263,7 +282,8 @@ export function canAfford(stock: Stock, cost?: Cost): boolean {
     stock.wood >= (cost.wood ?? 0) &&
     stock.flint >= (cost.flint ?? 0) &&
     stock.food >= (cost.food ?? 0) &&
-    stock.ideas >= (cost.ideas ?? 0)
+    stock.ideas >= (cost.ideas ?? 0) &&
+    stock.bones >= (cost.bones ?? 0)
   );
 }
 
@@ -332,6 +352,7 @@ function clampStock(s: Stock): Stock {
     flint: Math.max(0, s.flint),
     food: Math.max(0, s.food),
     ideas: Math.max(0, s.ideas),
+    bones: Math.max(0, s.bones),
   };
 }
 
@@ -342,12 +363,14 @@ function payCost(stock: Stock, cost?: Cost): Stock {
     flint: stock.flint - (cost.flint ?? 0),
     food: stock.food - (cost.food ?? 0),
     ideas: stock.ideas - (cost.ideas ?? 0),
+    bones: stock.bones - (cost.bones ?? 0),
   });
 }
 
 interface Applied {
   stock: Stock;
   tools: ToolId[];
+  activeTools: ToolId[];
   tribe: number;
   painting: number;
 }
@@ -355,6 +378,7 @@ interface Applied {
 function grantReward(state: GameState, reward?: Reward): Applied {
   const stock = { ...state.stock };
   let tools = [...state.tools];
+  let activeTools = [...state.activeTools];
   let tribe = state.tribe;
   let painting = state.painting;
   if (reward) {
@@ -362,13 +386,19 @@ function grantReward(state: GameState, reward?: Reward): Applied {
     stock.flint += reward.flint ?? 0;
     stock.food += reward.food ?? 0;
     stock.ideas += reward.ideas ?? 0;
+    stock.bones += reward.bones ?? 0;
     tribe += reward.tribe ?? 0;
     painting += reward.painting ?? 0;
     if (reward.tools) {
-      for (const t of reward.tools) if (!tools.includes(t)) tools = [...tools, t];
+      for (const t of reward.tools) {
+        if (!tools.includes(t)) tools = [...tools, t];
+        // Auto-equip a freshly crafted tool while there's room, so day play is
+        // unchanged until you exceed the carry limit (then you swap at a transition).
+        if (!activeTools.includes(t) && activeTools.length < CARRY_MAX) activeTools = [...activeTools, t];
+      }
     }
   }
-  return { stock: clampStock(stock), tools, tribe, painting };
+  return { stock: clampStock(stock), tools, activeTools, tribe, painting };
 }
 
 /** Resolve win/loss after a mutation; returns a finished state or the input. */
@@ -429,6 +459,7 @@ function applyHuntOutcome(
       ...base,
       stock: payCost(a.stock, opt.cost),
       tools: a.tools,
+      activeTools: a.activeTools,
       tribe: a.tribe,
       painting: a.painting,
       lastEvent: { kind: opt.reward?.painting ? "paint" : "hunt", by: byId },
@@ -463,38 +494,54 @@ function enterNight(state: GameState): GameState {
   }
 
   // Resolve set-aside night cards (their single option, free of cost).
+  let activeTools = state.activeTools;
   const discard = [...state.discard];
   for (const inst of state.nightPile) {
     const card = cardOf(inst);
-    const applied = grantReward({ ...state, stock, tools, tribe, painting }, card.options[0]?.reward);
+    const applied = grantReward({ ...state, stock, tools, activeTools, tribe, painting }, card.options[0]?.reward);
     stock = applied.stock;
     tools = applied.tools;
+    activeTools = applied.activeTools;
     tribe = applied.tribe;
     painting = applied.painting;
     log.push({ day: state.day, text: `✨ ${card.title}.` });
     discard.push(inst);
   }
 
+  // Don't deal the night deck yet: first the tribe packs (the carry screen).
   const night: GameState = {
     ...state,
     phase: "night",
     stock,
     tools,
+    activeTools,
     tribe,
     painting,
     skulls,
     nightPile: [],
     discard,
+    transition: { to: "night" },
     log: log.slice(-40),
     lastEvent: { kind: "night" },
   };
   return settle(night);
 }
 
-/** After a day action, fold into night when every deck is exhausted. */
-function maybeEnterNight(state: GameState): GameState {
-  if (state.status === "playing" && state.phase === "day" && isDayOver(state)) {
-    return enterNight(state);
+/**
+ * After an action, fold into the next round when every deck is exhausted:
+ * day → night (feed + transition), or night → day (transition). The actual deck
+ * deal happens caller-side via START_NIGHT / START_DAY after the carry screen.
+ */
+function maybeEndRound(state: GameState): GameState {
+  if (state.status !== "playing" || state.transition || state.hunt) return state;
+  if (!isDayOver(state)) return state;
+  if (state.phase === "day") return enterNight(state);
+  if (state.phase === "night") {
+    return {
+      ...state,
+      transition: { to: "day" },
+      log: pushLog(state, "🌅 De nacht loopt ten einde — pak in voor de dag."),
+    };
   }
   return state;
 }
@@ -532,7 +579,7 @@ export function reduce(state: GameState, action: Action): GameState {
     }
 
     case "PICK": {
-      if (state.status !== "playing" || state.phase !== "day") return state;
+      if (state.status !== "playing" || (state.phase !== "day" && state.phase !== "night") || state.transition) return state;
       if (state.hunt) return state; // paused while a shared hunt runs
       const player = findPlayer(state, action.playerId);
       if (!player) return state;
@@ -562,13 +609,13 @@ export function reduce(state: GameState, action: Action): GameState {
           nightPile: [...state.nightPile, action.cardId],
           log: pushLog(state, `🌙 ${player.name} legt "${card.title}" opzij voor de nacht.`),
         };
-        return maybeEnterNight(next);
+        return maybeEndRound(next);
       }
       return next;
     }
 
     case "RESOLVE": {
-      if (state.status !== "playing" || state.phase !== "day") return state;
+      if (state.status !== "playing" || (state.phase !== "day" && state.phase !== "night") || state.transition) return state;
       if (state.hunt) return state; // paused while a shared hunt runs
       const player = findPlayer(state, action.playerId);
       if (!player || player.active === null) return state;
@@ -595,6 +642,7 @@ export function reduce(state: GameState, action: Action): GameState {
             ...next,
             stock: payCost(a.stock, opt.cost),
             tools: a.tools,
+            activeTools: a.activeTools,
             tribe: a.tribe,
             painting: a.painting,
             lastEvent: { kind: opt.reward?.painting ? "paint" : "hunt", by: player.id },
@@ -616,6 +664,7 @@ export function reduce(state: GameState, action: Action): GameState {
           ...next,
           stock: payCost(a.stock, opt.cost),
           tools: a.tools,
+          activeTools: a.activeTools,
           tribe: a.tribe,
           painting: a.painting,
           lastEvent: {
@@ -637,13 +686,13 @@ export function reduce(state: GameState, action: Action): GameState {
 
       next = settle(next);
       if (isFinished(next)) return next;
-      return maybeEnterNight(next);
+      return maybeEndRound(next);
     }
 
     case "RESOLVE_HUNT": {
       // Quick-resolve path: the carried outcome (from the toggle / reduced
       // motion) is applied directly, no dice arena.
-      if (state.status !== "playing" || state.phase !== "day") return state;
+      if (state.status !== "playing" || (state.phase !== "day" && state.phase !== "night") || state.transition) return state;
       if (state.hunt) return state; // a shared hunt is already running
       if (action.outcome !== "win" && action.outcome !== "lose") return state;
       const player = findPlayer(state, action.playerId);
@@ -663,11 +712,11 @@ export function reduce(state: GameState, action: Action): GameState {
       let next = applyHuntOutcome(base, opt, action.outcome, player.id, player.name, card.title);
       next = settle(next);
       if (isFinished(next)) return next;
-      return maybeEnterNight(next);
+      return maybeEndRound(next);
     }
 
     case "START_HUNT": {
-      if (state.status !== "playing" || state.phase !== "day") return state;
+      if (state.status !== "playing" || (state.phase !== "day" && state.phase !== "night") || state.transition) return state;
       if (state.hunt) return state; // one hunt at a time
       const player = findPlayer(state, action.playerId);
       if (!player || player.active === null) return state;
@@ -805,7 +854,7 @@ export function reduce(state: GameState, action: Action): GameState {
       };
       next = settle(next);
       if (isFinished(next)) return next;
-      return maybeEnterNight(next);
+      return maybeEndRound(next);
     }
 
     case "HUNT_DISMISS": {
@@ -814,11 +863,11 @@ export function reduce(state: GameState, action: Action): GameState {
       if (!hunt || !hunt.done) return state;
       const next = settle({ ...state, hunt: undefined });
       if (isFinished(next)) return next;
-      return maybeEnterNight(next);
+      return maybeEndRound(next);
     }
 
     case "GIVE_UP": {
-      if (state.status !== "playing" || state.phase !== "day") return state;
+      if (state.status !== "playing" || (state.phase !== "day" && state.phase !== "night") || state.transition) return state;
       if (state.hunt) return state; // paused while a shared hunt runs
       const player = findPlayer(state, action.playerId);
       if (!player || player.active === null) return state;
@@ -843,11 +892,37 @@ export function reduce(state: GameState, action: Action): GameState {
       };
       next = settle(next);
       if (isFinished(next)) return next;
-      return maybeEnterNight(next);
+      return maybeEndRound(next);
     }
 
-    case "ADVANCE_NIGHT": {
-      if (state.status !== "playing" || state.phase !== "night") return state;
+    case "SELECT_CARRY": {
+      // Only during a transition: choose ≤ CARRY_MAX owned tools to carry.
+      if (!state.transition) return state;
+      const picked = action.tools.filter((t) => state.tools.includes(t)).slice(0, CARRY_MAX);
+      return { ...state, activeTools: picked };
+    }
+
+    case "START_NIGHT": {
+      // Confirm the carry choice and deal the night deck.
+      if (state.status !== "playing" || state.transition?.to !== "night") return state;
+      const players: PaleoPlayer[] = state.players.map((p, i) => ({
+        ...p,
+        deck: action.decks[i] ?? [],
+        active: null,
+      }));
+      return {
+        ...state,
+        phase: "night",
+        players,
+        discard: [],
+        transition: undefined,
+        lastEvent: { kind: "night" },
+        log: pushLog(state, `🌙 De stam trekt de nacht in.`),
+      };
+    }
+
+    case "START_DAY": {
+      if (state.status !== "playing" || state.transition?.to !== "day") return state;
       const players: PaleoPlayer[] = state.players.map((p, i) => ({
         ...p,
         deck: action.decks[i] ?? [],
@@ -860,6 +935,7 @@ export function reduce(state: GameState, action: Action): GameState {
         players,
         discard: [],
         nightPile: [],
+        transition: undefined,
         lastEvent: { kind: "dawn" },
         log: pushLog(state, `☀️ Dag ${state.day + 1} breekt aan.`),
       };
