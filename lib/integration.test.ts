@@ -326,4 +326,28 @@ describe("integration: full game through the api layer", () => {
     expect(again).toBe(10);
     expect(store.paleo_games[0].version).toBe(10);
   });
+
+  it("RESOLVE_HUNT carries a mini-game win through the api layer", async () => {
+    // A started game where p1 holds a hunt card (hert, fight 2, +3 food). The
+    // extra card keeps the day open so night feeding doesn't eat the reward.
+    let s = createLobbyState();
+    s = { ...s, players: [{ id: "p1", name: "Oeg", deck: [], active: null }] };
+    s = reduce(s, { type: "START", decks: [["hert#0", "vlakte#1"]] });
+    s = reduce(s, { type: "PICK", playerId: "p1", cardId: "hert#0" });
+    store.paleo_games = [{ id: "g1", code: "HUNT", status: s.status, state: s, version: 3 }];
+
+    const foodBefore = (store.paleo_games[0].state as GameState).stock.food;
+    const v = await applyAction("g1", {
+      type: "RESOLVE_HUNT",
+      playerId: "p1",
+      optionIndex: 0,
+      outcome: "win",
+    });
+
+    expect(v).toBe(4); // version-guarded write landed
+    const after = store.paleo_games[0].state as GameState;
+    expect(after.stock.food).toBe(foodBefore + 3); // reward applied
+    expect(after.players[0].active).toBeNull(); // card consumed (retry-safe)
+    expect(store.paleo_games[0].version).toBe(4);
+  });
 });

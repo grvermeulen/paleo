@@ -101,6 +101,76 @@ describe("hunting / fights", () => {
   });
 });
 
+describe("hunting mini-game (RESOLVE_HUNT)", () => {
+  // The mini-game decides win/lose on the phone; the reducer trusts the outcome.
+  it("a carried win grants the reward even with no weapons (skill overrides)", () => {
+    let s = startGame([["hert#0", "vlakte#1"]]);
+    s = reduce(s, { type: "PICK", playerId: "p0", cardId: "hert#0" });
+    expect(weaponStrength(s)).toBe(0); // would lose the deterministic check
+    s = reduce(s, { type: "RESOLVE_HUNT", playerId: "p0", optionIndex: 0, outcome: "win" });
+    expect(s.skulls).toBe(0);
+    expect(s.stock.food).toBe(6); // +3 reward
+    expect(s.players[0].active).toBeNull();
+    expect(s.lastEvent?.kind).toBe("hunt");
+  });
+
+  it("a mammoth win paints the wall (extra card keeps it in the day phase)", () => {
+    let s = startGame([["mammoet#0", "vlakte#1"]]); // tribe 2 meets the gate
+    s = reduce(s, { type: "PICK", playerId: "p0", cardId: "mammoet#0" });
+    s = reduce(s, { type: "RESOLVE_HUNT", playerId: "p0", optionIndex: 0, outcome: "win" });
+    expect(s.painting).toBe(1); // +1 painting
+    expect(s.stock.food).toBe(7); // +4 food
+    expect(s.lastEvent?.kind).toBe("paint");
+    expect(s.phase).toBe("day"); // vlakte#1 still in deck → no night yet
+  });
+
+  it("a winning hunt that fills the wall finishes the game", () => {
+    let s = startGame([["mammoet#0"]]);
+    s = { ...s, painting: 4 }; // one piece from victory
+    s = reduce(s, { type: "PICK", playerId: "p0", cardId: "mammoet#0" });
+    s = reduce(s, { type: "RESOLVE_HUNT", playerId: "p0", optionIndex: 0, outcome: "win" });
+    expect(s.painting).toBe(5);
+    expect(s.phase).toBe("won");
+    expect(s.status).toBe("finished");
+  });
+
+  it("a carried loss adds skulls equal to the strength deficit", () => {
+    let s = startGame([["zwijn#0", "vlakte#1"]]); // fight 3, extra card avoids night
+    s = reduce(s, { type: "PICK", playerId: "p0", cardId: "zwijn#0" });
+    s = reduce(s, { type: "RESOLVE_HUNT", playerId: "p0", optionIndex: 0, outcome: "lose" });
+    expect(s.skulls).toBe(3); // max(1, 3 - 0)
+    expect(s.stock.food).toBe(3); // no reward
+    expect(s.lastEvent?.kind).toBe("fail");
+  });
+
+  it("a fumbled-but-strong hunt still costs at least one skull (the floor)", () => {
+    let s = startGame([["hert#0", "vlakte#1"]]); // fight 2
+    s = { ...s, tools: ["speer"] }; // strength 2 >= 2 → raw deficit would be 0
+    s = reduce(s, { type: "PICK", playerId: "p0", cardId: "hert#0" });
+    s = reduce(s, { type: "RESOLVE_HUNT", playerId: "p0", optionIndex: 0, outcome: "lose" });
+    expect(s.skulls).toBe(1); // max(1, 2 - 2)
+  });
+
+  it("is idempotent: re-applying after the card is consumed is a no-op", () => {
+    let s = startGame([["hert#0", "vlakte#1"]]);
+    s = reduce(s, { type: "PICK", playerId: "p0", cardId: "hert#0" });
+    const once = reduce(s, { type: "RESOLVE_HUNT", playerId: "p0", optionIndex: 0, outcome: "win" });
+    const twice = reduce(once, { type: "RESOLVE_HUNT", playerId: "p0", optionIndex: 0, outcome: "win" });
+    expect(twice).toBe(once);
+  });
+
+  it("guards an illegal outcome and a non-fight option", () => {
+    let s = startGame([["hert#0"]]);
+    s = reduce(s, { type: "PICK", playerId: "p0", cardId: "hert#0" });
+    // @ts-expect-error — exercising the runtime guard against a bad outcome
+    expect(reduce(s, { type: "RESOLVE_HUNT", playerId: "p0", optionIndex: 0, outcome: "draw" })).toBe(s);
+
+    let g = startGame([["vlakte#0"]]); // a gather card has no fight option
+    g = reduce(g, { type: "PICK", playerId: "p0", cardId: "vlakte#0" });
+    expect(reduce(g, { type: "RESOLVE_HUNT", playerId: "p0", optionIndex: 0, outcome: "win" })).toBe(g);
+  });
+});
+
 describe("painting & win", () => {
   it("painting needs a torch", () => {
     let s = startGame([["rotswand#0"]]);
