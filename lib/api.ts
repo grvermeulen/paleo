@@ -141,15 +141,19 @@ export async function startGame(gameId: string): Promise<void> {
     if (attempt > 0) await sleep(Math.min(80 * 2 ** (attempt - 1), 1000));
     const { data: row, error: readErr } = await supabase
       .from("paleo_games")
-      .select("version,status")
+      .select("version,status,state")
       .eq("id", gameId)
       .single();
     if (readErr || !row) throw readErr ?? new Error("Spel niet gevonden.");
     if (row.status !== "lobby") return; // already started
 
+    // Carry the difficulty chosen in the lobby into the started game.
+    const lobbyDifficulty = (row.state as GameState | null)?.difficulty ?? "normal";
+    const started = { ...s, difficulty: lobbyDifficulty };
+
     const { data: updated, error } = await supabase
       .from("paleo_games")
-      .update({ state: s, status: "playing", version: row.version + 1 })
+      .update({ state: started, status: "playing", version: row.version + 1 })
       .eq("id", gameId)
       .eq("version", row.version)
       .select("id");

@@ -7,6 +7,9 @@ import {
   makeInstances,
   dealDecks,
   isDayOver,
+  huntPreyMaxHp,
+  huntHitTarget,
+  huntDodgeTarget,
   type GameState,
 } from "./engine";
 import { getCard } from "./paleo/cards";
@@ -213,15 +216,22 @@ describe("shared dice hunt (START_HUNT / HUNT_ROLL / HUNT_FLEE)", () => {
     expect(s.hunt!.preyHp).toBe(2);
   });
 
-  it("killing the prey wins the hunt and grants the reward", () => {
+  it("killing the prey wins the hunt, grants the reward, and shows a result", () => {
     let s = startHunt([["hert#0", "vlakte#1"]]);
     s = { ...s, hunt: { ...s.hunt!, preyHp: 1 } };
     const foodBefore = s.stock.food;
     s = reduce(s, { type: "HUNT_ROLL", playerId: "p0", seq: 0, dice: [5, 5] });
-    expect(s.hunt).toBeUndefined();
+    // The reward is applied immediately, but the hunt lingers as a result screen.
     expect(s.stock.food).toBe(foodBefore + 3);
     expect(s.players[0].active).toBeNull();
     expect(s.lastEvent?.kind).toBe("hunt");
+    expect(s.hunt?.done).toBe(true);
+    expect(s.hunt?.result?.outcome).toBe("win");
+    // A retried final roll is a no-op (done guard).
+    expect(reduce(s, { type: "HUNT_ROLL", playerId: "p0", seq: 0, dice: [6, 6] })).toBe(s);
+    // Dismissing clears the hunt and continues the day.
+    s = reduce(s, { type: "HUNT_DISMISS", playerId: "p0" });
+    expect(s.hunt).toBeUndefined();
   });
 
   it("a failed dodge wounds the shared tribe HP and passes the turn", () => {
@@ -236,9 +246,12 @@ describe("shared dice hunt (START_HUNT / HUNT_ROLL / HUNT_FLEE)", () => {
     let s = startHunt([["zwijn#0", "vlakte#1"]]); // F3, bite 2
     s = { ...s, hunt: { ...s.hunt!, step: "dodge", seq: 1, tribeHp: 1 } };
     s = reduce(s, { type: "HUNT_ROLL", playerId: "p0", seq: 1, dice: [1, 1] });
-    expect(s.hunt).toBeUndefined();
     expect(s.skulls).toBe(3); // penalty max(1, F − W) = max(1, 3 − 0)
     expect(s.lastEvent?.kind).toBe("fail");
+    expect(s.hunt?.done).toBe(true);
+    expect(s.hunt?.result).toMatchObject({ outcome: "lose", skulls: 3 });
+    s = reduce(s, { type: "HUNT_DISMISS", playerId: "p0" });
+    expect(s.hunt).toBeUndefined();
   });
 
   it("rolls rotate the turn between players", () => {
@@ -294,7 +307,7 @@ describe("shared dice hunt (START_HUNT / HUNT_ROLL / HUNT_FLEE)", () => {
       for (let i = 0; i < n; i++) {
         let s = startHunt([[`${prey}#0`, "vlakte#1"]], tools ? { tools } : undefined);
         let guard = 0;
-        while (s.hunt && guard++ < 1000) {
+        while (s.hunt && !s.hunt.done && guard++ < 1000) {
           const pid = s.hunt.order[s.hunt.turn];
           s = reduce(s, { type: "HUNT_ROLL", playerId: pid, seq: s.hunt.seq, dice: [die(rng), die(rng)] });
         }
@@ -314,6 +327,43 @@ describe("shared dice hunt (START_HUNT / HUNT_ROLL / HUNT_FLEE)", () => {
     // ...and the extremes land where you'd expect (loose bounds, seeded):
     expect(armedHert).toBeGreaterThan(0.45); // achievable with the right kit
     expect(barehandMammoet).toBeLessThan(0.45); // genuinely punishing unarmed
+  });
+});
+
+describe("difficulty", () => {
+  it("SET_DIFFICULTY only applies in the lobby", () => {
+    let s = createLobbyState();
+    expect(s.difficulty).toBe("normal");
+    s = reduce(s, { type: "SET_DIFFICULTY", difficulty: "hard" });
+    expect(s.difficulty).toBe("hard");
+    const playing = startGame([["vlakte#0"]]);
+    expect(reduce(playing, { type: "SET_DIFFICULTY", difficulty: "easy" })).toBe(playing);
+  });
+
+  it("START carries the lobby difficulty into the game", () => {
+    let s = createLobbyState();
+    s = { ...s, players: [{ id: "p0", name: "P0", deck: [], active: null }] };
+    s = reduce(s, { type: "SET_DIFFICULTY", difficulty: "hard" });
+    s = reduce(s, { type: "START", decks: [["vlakte#0"]] });
+    expect(s.difficulty).toBe("hard");
+  });
+
+  it("scales prey HP and roll targets", () => {
+    expect(huntPreyMaxHp(2, "normal")).toBe(4);
+    expect(huntPreyMaxHp(2, "easy")).toBe(3);
+    expect(huntPreyMaxHp(2, "hard")).toBe(6);
+    expect(huntHitTarget("normal")).toBe(7);
+    expect(huntHitTarget("hard")).toBe(8);
+    expect(huntHitTarget("easy")).toBe(6);
+    expect(huntDodgeTarget(4, "normal")).toBe(10);
+    expect(huntDodgeTarget(4, "hard")).toBe(11);
+
+    // A hard hunt sets up a tougher prey.
+    let s = startGame([["hert#0", "vlakte#1"]]);
+    s = { ...s, difficulty: "hard" };
+    s = reduce(s, { type: "PICK", playerId: "p0", cardId: "hert#0" });
+    s = reduce(s, { type: "START_HUNT", playerId: "p0", optionIndex: 0 });
+    expect(s.hunt!.preyMaxHp).toBe(6); // 2 + 2 + 2
   });
 });
 
