@@ -15,8 +15,15 @@ import {
   type GameState,
   cardOf,
   reduce,
+  weaponStrength,
 } from "@/lib/engine";
-import { getDeviceId, getSavedName, saveName } from "@/lib/identity";
+import {
+  getDeviceId,
+  getSavedName,
+  saveName,
+  getQuickHunt,
+  prefersReducedMotion,
+} from "@/lib/identity";
 import { playEventSfx } from "@/lib/sound";
 import { useShake } from "@/lib/useShake";
 import Mammoth from "@/components/Mammoth";
@@ -28,6 +35,7 @@ import CardBack from "@/components/CardBack";
 import CardView from "@/components/CardView";
 import WinScreen from "@/components/WinScreen";
 import LoseScreen from "@/components/LoseScreen";
+import HuntMiniGame from "@/components/HuntMiniGame";
 import GameSounds from "@/components/GameSounds";
 import SoundMenu from "@/components/SoundMenu";
 import { HowToPlayButton } from "@/components/HowToPlay";
@@ -45,6 +53,8 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const playedVersion = useRef(0);
   const [actErr, setActErr] = useState<string | null>(null);
+  // When set, the chosen fight option is being played as the hunt mini-game.
+  const [hunt, setHunt] = useState<{ optionIndex: number } | null>(null);
 
   const live = game.state;
   const view = optimistic ?? live;
@@ -133,6 +143,28 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
     }
   }
 
+  // Choosing an option: fight options open the hunt mini-game (unless quick
+  // resolve / reduced motion is on); everything else resolves immediately.
+  function chooseOption(i: number) {
+    if (!myPlayer?.active || !view) return;
+    const opt = cardOf(myPlayer.active).options[i];
+    if (opt?.fight == null) {
+      dispatch({ type: "RESOLVE", playerId: meId, optionIndex: i });
+      return;
+    }
+    if (getQuickHunt() || prefersReducedMotion()) {
+      const outcome = weaponStrength(view) >= opt.fight ? "win" : "lose";
+      dispatch({ type: "RESOLVE_HUNT", playerId: meId, optionIndex: i, outcome });
+      return;
+    }
+    setHunt({ optionIndex: i });
+  }
+
+  function resolveHunt(outcome: "win" | "lose") {
+    if (hunt) dispatch({ type: "RESOLVE_HUNT", playerId: meId, optionIndex: hunt.optionIndex, outcome });
+    setHunt(null);
+  }
+
   if (game.loading) return <Centered>Laden…</Centered>;
   if (game.error) return <Centered>{game.error}</Centered>;
 
@@ -197,7 +229,7 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
           <span className="text-stroke rounded-full border-2 border-[var(--color-ink)] bg-[var(--color-clay-200)] px-3 py-0.5 text-sm font-extrabold">
             {view.phase === "night" ? `🌙 Nacht ${view.day}` : `☀️ Dag ${view.day}`}
           </span>
-          <SoundMenu />
+          <SoundMenu showQuickHunt />
         </div>
         <CavePainting painting={view.painting} goal={view.paintingGoal} />
         <ResourceBar stock={view.stock} tribe={view.tribe} size="sm" />
@@ -234,6 +266,14 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
         </section>
       ) : !myPlayer ? (
         <Centered>Je kijkt mee met deze ronde.</Centered>
+      ) : myPlayer.active && hunt ? (
+        <HuntMiniGame
+          card={cardOf(myPlayer.active)}
+          option={cardOf(myPlayer.active).options[hunt.optionIndex]}
+          state={view}
+          onComplete={resolveHunt}
+          onCancel={() => setHunt(null)}
+        />
       ) : myPlayer.active ? (
         <div className="flex flex-col items-center gap-2">
           <p className="text-center text-sm font-bold text-[var(--color-stone-700)]">
@@ -243,7 +283,7 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
             card={cardOf(myPlayer.active)}
             state={view}
             interactive
-            onResolve={(i) => dispatch({ type: "RESOLVE", playerId: meId, optionIndex: i })}
+            onResolve={chooseOption}
             onGiveUp={() => dispatch({ type: "GIVE_UP", playerId: meId })}
           />
         </div>

@@ -96,6 +96,11 @@ export type Action =
   | { type: "START"; decks: string[][] }
   | { type: "PICK"; playerId: string; cardId: string }
   | { type: "RESOLVE"; playerId: string; optionIndex: number }
+  // RESOLVE_HUNT carries the outcome of the phone mini-game for a fight option.
+  // The reducer trusts the carried outcome (it never replays the mini-game), so
+  // every peer reduces to the same state — exactly like deck shuffles, the
+  // skill/chance lives in the caller and only the result rides the action.
+  | { type: "RESOLVE_HUNT"; playerId: string; optionIndex: number; outcome: "win" | "lose" }
   | { type: "GIVE_UP"; playerId: string }
   | { type: "ADVANCE_NIGHT"; decks: string[][] }
   | { type: "RESET" };
@@ -503,6 +508,55 @@ export function reduce(state: GameState, action: Action): GameState {
             state,
             `${player.name}: ${card.title} — ${opt.label}.`,
           ),
+        };
+      }
+
+      next = settle(next);
+      if (isFinished(next)) return next;
+      return maybeEnterNight(next);
+    }
+
+    case "RESOLVE_HUNT": {
+      // Same shape as RESOLVE's fight branch, but the win/lose verdict comes
+      // from the mini-game on the player's phone instead of the strength check.
+      if (state.status !== "playing" || state.phase !== "day") return state;
+      if (action.outcome !== "win" && action.outcome !== "lose") return state;
+      const player = findPlayer(state, action.playerId);
+      if (!player || player.active === null) return state;
+      const card = cardOf(player.active);
+      const opt = card.options[action.optionIndex];
+      if (!opt || opt.fight == null) return state; // only fight options hunt
+      if (!optionStatus(state, card, opt).playable) return state;
+
+      const discardCard = player.active;
+      const players = state.players.map((p) =>
+        p.id === player.id ? { ...p, active: null } : p,
+      );
+      let next: GameState = {
+        ...state,
+        players,
+        discard: [...state.discard, discardCard],
+      };
+
+      if (action.outcome === "win") {
+        const a = grantReward(next, opt.reward);
+        next = {
+          ...next,
+          stock: payCost(a.stock, opt.cost),
+          tools: a.tools,
+          tribe: a.tribe,
+          painting: a.painting,
+          lastEvent: { kind: opt.reward?.painting ? "paint" : "hunt", by: player.id },
+          log: pushLog(state, `🗡️ ${player.name}: ${card.title} — gevangen!`),
+        };
+      } else {
+        // A fumble always costs ≥1 (a strong tribe stays low-risk, never free).
+        const wound = Math.max(1, opt.fight - weaponStrength(state));
+        next = {
+          ...next,
+          skulls: state.skulls + wound,
+          lastEvent: { kind: "fail", by: player.id },
+          log: pushLog(state, `💢 ${player.name}: ${card.title} — ontsnapt! → ${wound} 💀.`),
         };
       }
 
