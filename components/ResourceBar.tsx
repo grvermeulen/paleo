@@ -23,6 +23,7 @@ export default function ResourceBar({
     { key: "flint", emoji: RES_META.flint.emoji, value: stock.flint },
     { key: "food", emoji: RES_META.food.emoji, value: stock.food },
     { key: "ideas", emoji: RES_META.ideas.emoji, value: stock.ideas },
+    { key: "bones", emoji: RES_META.bones.emoji, value: stock.bones },
     { key: "tribe", emoji: TRIBE, value: tribe },
   ];
   return (

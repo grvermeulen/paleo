@@ -19,24 +19,28 @@ export type ToolId =
   | "knots" // club — light weapon
   | "bijl" // axe — fells big trees, light weapon
   | "mand" // basket — gather more
-  | "fakkel"; // torch — light, lets you paint the cave wall
+  | "fakkel" // torch — light, lets you paint the cave wall
+  | "botspeer"; // bone spear — crafted at night from bones, strong weapon
 
 export interface Tool {
   id: ToolId;
   name: string;
   emoji: string;
-  /** Weapon strength this tool adds to the tribe. */
+  /** Weapon strength this tool adds to the tribe (by day). */
   strength: number;
+  /** Weapon strength at night (fire & torch shine in the dark). Defaults to `strength`. */
+  nightStrength?: number;
   blurb: string;
 }
 
 export const TOOLS: Record<ToolId, Tool> = {
-  vuur: { id: "vuur", name: "Vuur", emoji: "🔥", strength: 0, blurb: "Warmte en licht. Nodig voor de fakkel." },
-  speer: { id: "speer", name: "Speer", emoji: "🗡️", strength: 2, blurb: "Het sterkste jachtwapen." },
+  vuur: { id: "vuur", name: "Vuur", emoji: "🔥", strength: 0, nightStrength: 3, blurb: "Warmte en licht. Sterk tegen nachtroofdieren." },
+  speer: { id: "speer", name: "Speer", emoji: "🗡️", strength: 2, blurb: "Het sterkste daggwapen." },
   knots: { id: "knots", name: "Knots", emoji: "🏏", strength: 1, blurb: "Eenvoudig maar doeltreffend." },
   bijl: { id: "bijl", name: "Bijl", emoji: "🪓", strength: 1, blurb: "Velt dikke bomen en verdedigt." },
   mand: { id: "mand", name: "Mand", emoji: "🧺", strength: 0, blurb: "Draag meer voedsel mee naar huis." },
-  fakkel: { id: "fakkel", name: "Fakkel", emoji: "🕯️", strength: 0, blurb: "Licht in de grot — schilder de muur." },
+  fakkel: { id: "fakkel", name: "Fakkel", emoji: "🕯️", strength: 0, nightStrength: 2, blurb: "Licht in de grot — schilder de muur, verjaag de nacht." },
+  botspeer: { id: "botspeer", name: "Botspeer", emoji: "🦴", strength: 3, nightStrength: 3, blurb: "Uit bot geslepen 's nachts — vlijmscherp, dag en nacht." },
 };
 
 /** What a card option costs (consumed when resolved). */
@@ -45,6 +49,7 @@ export interface Cost {
   flint?: number;
   food?: number;
   ideas?: number;
+  bones?: number;
 }
 
 /** Hard gate: an option can only be chosen if these hold. */
@@ -61,6 +66,7 @@ export interface Reward {
   flint?: number;
   food?: number;
   ideas?: number;
+  bones?: number;
   tribe?: number;
   painting?: number;
   /** Tools gained (added to the tribe's shelf; duplicates are no-ops). */
@@ -275,6 +281,16 @@ export const CARDS: Card[] = [
     ],
     giveUpSkulls: 0,
   },
+  {
+    id: "bottentekening",
+    title: "Tafereel in beendermeel",
+    hint: "cave",
+    text: "Gemalen botten geven een spierwit pigment — alleen 's nachts te halen.",
+    options: [
+      { label: "Schilder met botwit (🕯️ + 🦴2)", requires: { tools: ["fakkel"] }, cost: { bones: 2 }, reward: { painting: 1 } },
+    ],
+    giveUpSkulls: 0,
+  },
   // ---- People ------------------------------------------------------------
   {
     id: "nomade",
@@ -327,6 +343,71 @@ export const CARDS: Card[] = [
     text: "Je droomt van nieuwe werktuigen en ontwaakt met een plan.",
     night: true,
     options: [{ label: "Onthoud de droom", reward: { ideas: 1 } }],
+  },
+  // ---- NIGHT POOL: only dealt during the playable night round -----------
+  {
+    id: "aasmaanlicht",
+    title: "Aas in het maanlicht",
+    hint: "water",
+    text: "Een kadaver glanst aan de oever — vol vlees en botten, als je durft.",
+    options: [{ label: "Stroop het af", reward: { food: 2, bones: 2 } }],
+    giveUpSkulls: 0,
+  },
+  {
+    id: "knekelveld",
+    title: "Oud knekelveld",
+    hint: "cave",
+    text: "Gebleekte botten zover je kunt zien onder de sterren.",
+    options: [{ label: "Verzamel botten", reward: { bones: 3 } }],
+    giveUpSkulls: 0,
+  },
+  {
+    id: "sabeltand",
+    title: "Sabeltandtijger",
+    hint: "hunt",
+    text: "Twee dolktanden lichten op in het donker. Vuur houdt hem op afstand.",
+    options: [{ label: "Vecht in het donker", fight: 3, reward: { food: 3, bones: 1 } }],
+    giveUpSkulls: 0,
+  },
+  {
+    id: "holenbeer",
+    title: "Holenbeer",
+    hint: "hunt",
+    text: "Een reus van bont en klauwen, gestoord in zijn slaap. Alleen samen.",
+    options: [{ label: "Versla hem (samen, 👥2)", requires: { people: 2 }, fight: 4, reward: { food: 4, bones: 2 } }],
+    giveUpSkulls: 0,
+  },
+  {
+    id: "vleermuizen",
+    title: "Vleermuiszwerm",
+    hint: "danger",
+    text: "Een wolk van vleugels en gekrijs stort zich op het kampvuur.",
+    options: [{ label: "Sla je een weg vrij", fight: 2, reward: { ideas: 1 } }],
+    giveUpSkulls: 1,
+  },
+  {
+    id: "duisternis",
+    title: "Diepe duisternis",
+    hint: "danger",
+    text: "Het pikkedonker verzwelgt het pad. Zonder fakkel raak je de weg kwijt.",
+    options: [{ label: "Hou de fakkel hoog (🕯️)", requires: { tools: ["fakkel"] }, reward: { bones: 1 } }],
+    giveUpSkulls: 1,
+  },
+  {
+    id: "bitterekou",
+    title: "Bittere kou",
+    hint: "danger",
+    text: "De vrieskou kruipt door merg en been. Vuur is je enige redding.",
+    options: [{ label: "Schuil bij het vuur (🔥)", requires: { tools: ["vuur"] }, reward: { food: 1 } }],
+    giveUpSkulls: 1,
+  },
+  {
+    id: "maak-botspeer",
+    title: "Slijp een botspeer",
+    hint: "camp",
+    text: "Bij vuurlicht slijp je een bot tot een vlijmscherpe punt.",
+    options: [{ label: "Maak de botspeer (🦴2 + 💡1)", cost: { bones: 2, ideas: 1 }, reward: { tools: ["botspeer"] } }],
+    giveUpSkulls: 0,
   },
 ];
 

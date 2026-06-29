@@ -72,9 +72,9 @@ function HowToPlayModal({ onClose }: { onClose: () => void }) {
             spelen <b>samen</b> tegen het spel: verzamel grondstoffen, maak werktuigen,
             jaag en vereeuwig je stam op de grotwand.
           </p>
-          <CavePainting painting={2} goal={5} />
+          <CavePainting painting={2} goal={6} />
           <p className="text-center text-sm font-bold text-[var(--color-stone-700)]">
-            🎨 Vul de grotwand (5 stukken) om te <b>winnen</b> — bij 5 💀 sterft de stam uit.
+            🎨 Vul de grotwand (6 stukken) om te <b>winnen</b> — bij 5 💀 sterft de stam uit.
           </p>
         </div>
       ),
@@ -113,7 +113,7 @@ function HowToPlayModal({ onClose }: { onClose: () => void }) {
             vuursteen, 🍖 voedsel en 💡 ideeën. 🍖 voedt elke nacht je stam 👥.
           </p>
           <div className="card-pop w-full p-3">
-            <ResourceBar stock={{ wood: 3, flint: 2, food: 4, ideas: 1 }} tribe={3} size="md" />
+            <ResourceBar stock={{ wood: 3, flint: 2, food: 4, ideas: 1, bones: 0 }} tribe={3} size="md" />
           </div>
           <p className="text-center text-sm font-bold text-[var(--color-stone-700)]">
             Zonder voedsel wordt je stam kleiner — en een lege stam is gevaarlijk.
@@ -174,18 +174,38 @@ function HowToPlayModal({ onClose }: { onClose: () => void }) {
       ),
     },
     {
-      title: "5. Schilder om te winnen 🎨",
+      title: "5. Speel de nacht 🌙",
       body: (
         <div className="flex flex-col items-center gap-3">
           <p>
-            Met genoeg grondstoffen schilder je de grotwand. <b>5 stukken</b> = jullie
-            winnen samen! Tik om te schilderen:
+            Als de dag op is, eet je stam en begint de <b>nacht</b>: een eigen ronde met
+            nachtdieren (🐯🐻🦇) en gevaren in het donker. 🔥 vuur en 🕯️ fakkel zijn nu
+            extra sterk. Bij elke overgang <b>pak je in</b>: kies max 4 werktuigen die
+            meegaan — alleen die tellen mee in gevecht.
           </p>
-          <CavePainting painting={paint} goal={5} />
+          <div className="card-pop w-full p-3">
+            <ResourceBar stock={{ wood: 1, flint: 2, food: 3, ideas: 1, bones: 2 }} tribe={3} size="md" />
+          </div>
+          <p className="text-center text-sm font-bold text-[var(--color-stone-700)]">
+            ’s Nachts verzamel je 🦴 <b>botten</b> — die heb je nodig voor de laatste
+            grotschilderingen. Doorspelen tot diep in de nacht loont!
+          </p>
+        </div>
+      ),
+    },
+    {
+      title: "6. Schilder om te winnen 🎨",
+      body: (
+        <div className="flex flex-col items-center gap-3">
+          <p>
+            Met genoeg grondstoffen — en 🦴 botten uit de nacht — schilder je de grotwand.
+            <b> 6 stukken</b> = jullie winnen samen! Tik om te schilderen:
+          </p>
+          <CavePainting painting={paint} goal={6} />
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => setPaint((p) => Math.min(5, p + 1))}
+              onClick={() => setPaint((p) => Math.min(6, p + 1))}
               className="btn-pop bg-[var(--color-moss-300)] text-base"
             >
               🎨 Schilder
@@ -201,7 +221,7 @@ function HowToPlayModal({ onClose }: { onClose: () => void }) {
             )}
           </div>
           <p className="h-5 text-sm font-extrabold text-[var(--color-moss-600)]">
-            {paint >= 5 ? "🎉 De wand is vol — gewonnen!" : ""}
+            {paint >= 6 ? "🎉 De wand is vol — gewonnen!" : ""}
           </p>
         </div>
       ),
@@ -214,9 +234,9 @@ function HowToPlayModal({ onClose }: { onClose: () => void }) {
           <Rule emoji="🃏">Elke dag kies je uit 3 kaarten (achterkant zichtbaar). Tik — of schud je telefoon voor een willekeurige keuze.</Rule>
           <Rule emoji="🪵">Verzamel 🪵 hout, 🔪 vuursteen, 🍖 voedsel en 💡 ideeën voor de hele stam.</Rule>
           <Rule emoji="🔥">Maak werktuigen (🔥🗡️🪓🕯️) om sterker te jagen en meer te kunnen.</Rule>
-          <Rule emoji="🌙">’s Nachts eet je stam. Daarna begint een nieuwe dag met verse kaarten.</Rule>
+          <Rule emoji="🌙">’s Nachts eet je stam en speel je een nachtronde: nachtdieren, gevaren en 🦴 botten. Bij elke overgang pak je max 4 werktuigen in.</Rule>
           <Rule emoji="💀">Mislukkingen en gevaren geven 💀. Bij 5 💀 verlies je.</Rule>
-          <Rule emoji="🎨">Schilder 5 stukken van de grotwand om samen te winnen!</Rule>
+          <Rule emoji="🎨">Schilder 6 stukken van de grotwand (deels met 🦴 botten) om samen te winnen!</Rule>
         </div>
       ),
     },

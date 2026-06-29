@@ -14,9 +14,11 @@ export interface Mission {
   skullLimit: number;
   /** Starting tribe members. */
   startTribe: number;
-  startStock: { wood: number; flint: number; food: number; ideas: number };
-  /** The draw pool: card id -> number of copies. */
+  startStock: { wood: number; flint: number; food: number; ideas: number; bones: number };
+  /** The day draw pool: card id -> number of copies. */
   pool: Record<string, number>;
+  /** The night draw pool, dealt during the playable night round. */
+  nightPool: Record<string, number>;
 }
 
 export const FIRST_LIGHT: Mission = {
@@ -24,10 +26,12 @@ export const FIRST_LIGHT: Mission = {
   name: "Het eerste licht",
   blurb:
     "Verzamel, maak vuur en een fakkel, jaag samen en vereeuwig je stam op de grotwand — voor de duisternis jullie inhaalt.",
-  paintingGoal: 5,
+  // Goal 6: the day-only painting sources top out at 5, so at least one piece
+  // needs bones — which can only be gathered in the night round.
+  paintingGoal: 6,
   skullLimit: 5,
   startTribe: 2,
-  startStock: { wood: 2, flint: 2, food: 3, ideas: 0 },
+  startStock: { wood: 2, flint: 2, food: 3, ideas: 0, bones: 0 },
   pool: {
     // gathering
     vlakte: 1,
@@ -51,15 +55,30 @@ export const FIRST_LIGHT: Mission = {
     // painting (victory)
     rotswand: 2,
     handafdruk: 2,
+    bottentekening: 2, // needs bones from the night round
     // people
     nomade: 1,
     // dangers
     wolven: 1,
     storm: 1,
     koorts: 1,
-    // night
+    // set-aside night cards (auto-resolve when night falls)
     kampvuur: 1,
     droom: 1,
+  },
+  nightPool: {
+    // gather the night-only resource: bones
+    aasmaanlicht: 1,
+    knekelveld: 1,
+    // nocturnal hunts (reuse the dice arena)
+    sabeltand: 1,
+    holenbeer: 1,
+    // night dangers (need fire/torch)
+    vleermuizen: 1,
+    duisternis: 1,
+    bitterekou: 1,
+    // craft the night-only bone spear
+    "maak-botspeer": 1,
   },
 };
 
@@ -69,11 +88,20 @@ export const MISSIONS: Record<string, Mission> = {
 
 export const DEFAULT_MISSION = FIRST_LIGHT;
 
-/** Expand a mission's pool into a flat list of card ids (with copy suffixes). */
-export function buildPool(mission: Mission): string[] {
+function expand(pool: Record<string, number>): string[] {
   const out: string[] = [];
-  for (const [cardId, count] of Object.entries(mission.pool)) {
+  for (const [cardId, count] of Object.entries(pool)) {
     for (let i = 0; i < count; i++) out.push(cardId);
   }
   return out;
+}
+
+/** Expand a mission's DAY pool into a flat list of card ids (with copy suffixes). */
+export function buildPool(mission: Mission): string[] {
+  return expand(mission.pool);
+}
+
+/** Expand a mission's NIGHT pool (dealt during the playable night round). */
+export function buildNightPool(mission: Mission): string[] {
+  return expand(mission.nightPool);
 }

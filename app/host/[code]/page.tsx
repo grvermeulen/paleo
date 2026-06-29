@@ -2,7 +2,7 @@
 
 import { use, useEffect, useMemo, useState } from "react";
 import { useGame } from "@/lib/useGame";
-import { startGame, advanceNight, resetToLobby, applyAction } from "@/lib/api";
+import { startGame, startNight, startDay, selectCarry, resetToLobby, applyAction } from "@/lib/api";
 import { getDeviceId } from "@/lib/identity";
 import { accentFor } from "@/lib/paleo/colors";
 import Mammoth from "@/components/Mammoth";
@@ -19,7 +19,9 @@ import SoundMenu from "@/components/SoundMenu";
 import { HowToPlayButton } from "@/components/HowToPlay";
 import HuntArena from "@/components/HuntArena";
 import DifficultyPicker from "@/components/DifficultyPicker";
+import CarryScreen from "@/components/CarryScreen";
 import type { Difficulty } from "@/lib/engine";
+import type { ToolId } from "@/lib/paleo/cards";
 
 export default function HostPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = use(params);
@@ -59,11 +61,16 @@ export default function HostPage({ params }: { params: Promise<{ code: string }>
     }
   }
 
-  async function doNextDay() {
-    if (!game.gameId) return;
+  async function confirmTransition(tools: ToolId[]) {
+    const to = game.state?.transition?.to;
+    if (!game.gameId || !to) return;
     setBusy(true);
     try {
-      const v = await advanceNight(game.gameId);
+      if (tools.length) {
+        const v0 = await selectCarry(game.gameId, tools);
+        game.notify(v0);
+      }
+      const v = to === "night" ? await startNight(game.gameId) : await startDay(game.gameId);
       game.notify(v);
     } finally {
       setBusy(false);
@@ -251,26 +258,8 @@ export default function HostPage({ params }: { params: Promise<{ code: string }>
             />
           )}
 
-          {state.phase === "night" && (
-            <section className="card-pop flex w-full max-w-md flex-col items-center gap-3 p-5 text-center">
-              <span className="text-4xl anim-flicker" aria-hidden>
-                🌙🔥
-              </span>
-              <h3 className="text-xl font-extrabold">De stam rust bij het vuur</h3>
-              <ul className="w-full text-sm font-semibold text-[var(--color-stone-700)]">
-                {state.log
-                  .filter((l) => l.day === state.day)
-                  .slice(-4)
-                  .map((l, i) => (
-                    <li key={i}>{l.text}</li>
-                  ))}
-              </ul>
-              {isHost && (
-                <button onClick={doNextDay} disabled={busy} className="btn-pop bg-[var(--color-ochre-400)] text-white">
-                  {busy ? "Bezig…" : `☀️ Begin dag ${state.day + 1}`}
-                </button>
-              )}
-            </section>
+          {state.transition && (
+            <CarryScreen state={state} isHost={isHost} busy={busy} onConfirm={confirmTransition} />
           )}
 
           <section className="grid w-full gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -323,8 +312,9 @@ function Rules() {
         Elke speler bekijkt op de telefoon de achterkant van 3 kaarten en kiest er
         één. Samen verzamel je hout 🪵, vuursteen 🔪 en voedsel 🍖, bedenk je ideeën
         💡 en maak je werktuigen (vuur 🔥, speer 🗡️, fakkel 🕯️…). Jaag samen, pas op
-        voor gevaren ⚠️ en schilder de grotwand 🎨. Vul de wand ({"5 stukken"}) en je
-        wint — bij 5 💀 sterft de stam uit.
+        voor gevaren ⚠️ en schilder de grotwand 🎨. ’s Nachts speel je een nachtronde
+        en verzamel je 🦴 botten. Vul de wand ({"6 stukken"}) en je wint — bij 5 💀
+        sterft de stam uit.
       </p>
     </section>
   );

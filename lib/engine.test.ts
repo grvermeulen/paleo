@@ -40,7 +40,7 @@ describe("setup", () => {
     // first-light starting kit
     expect(s.stock).toMatchObject({ wood: 2, flint: 2, food: 3, ideas: 0 });
     expect(s.tribe).toBe(2);
-    expect(s.paintingGoal).toBe(5);
+    expect(s.paintingGoal).toBe(6);
     expect(s.skullLimit).toBe(5);
   });
 
@@ -96,7 +96,7 @@ describe("hunting / fights", () => {
 
   it("a fight with enough strength succeeds and rewards", () => {
     let s = startGame([["hert#0", "vlakte#1"]]);
-    s = { ...s, tools: ["speer"] };
+    s = { ...s, tools: ["speer"], activeTools: ["speer"] };
     s = reduce(s, { type: "PICK", playerId: "p0", cardId: "hert#0" });
     s = reduce(s, { type: "RESOLVE", playerId: "p0", optionIndex: 0 });
     expect(s.skulls).toBe(0);
@@ -129,10 +129,10 @@ describe("hunting mini-game (RESOLVE_HUNT)", () => {
 
   it("a winning hunt that fills the wall finishes the game", () => {
     let s = startGame([["mammoet#0"]]);
-    s = { ...s, painting: 4 }; // one piece from victory
+    s = { ...s, painting: 5 }; // one piece from victory
     s = reduce(s, { type: "PICK", playerId: "p0", cardId: "mammoet#0" });
     s = reduce(s, { type: "RESOLVE_HUNT", playerId: "p0", optionIndex: 0, outcome: "win" });
-    expect(s.painting).toBe(5);
+    expect(s.painting).toBe(6);
     expect(s.phase).toBe("won");
     expect(s.status).toBe("finished");
   });
@@ -148,7 +148,7 @@ describe("hunting mini-game (RESOLVE_HUNT)", () => {
 
   it("a fumbled-but-strong hunt still costs at least one skull (the floor)", () => {
     let s = startGame([["hert#0", "vlakte#1"]]); // fight 2
-    s = { ...s, tools: ["speer"] }; // strength 2 >= 2 → raw deficit would be 0
+    s = { ...s, tools: ["speer"], activeTools: ["speer"] }; // strength 2 >= 2 → raw deficit would be 0
     s = reduce(s, { type: "PICK", playerId: "p0", cardId: "hert#0" });
     s = reduce(s, { type: "RESOLVE_HUNT", playerId: "p0", optionIndex: 0, outcome: "lose" });
     expect(s.skulls).toBe(1); // max(1, 2 - 2)
@@ -178,7 +178,7 @@ describe("shared dice hunt (START_HUNT / HUNT_ROLL / HUNT_FLEE)", () => {
   // Dice ride the action so the reducer is fully deterministic.
   function startHunt(decks: string[][], opts?: { tools?: ("speer" | "knots" | "bijl")[] }): GameState {
     let s = startGame(decks);
-    if (opts?.tools) s = { ...s, tools: opts.tools };
+    if (opts?.tools) s = { ...s, tools: opts.tools, activeTools: opts.tools };
     s = reduce(s, { type: "PICK", playerId: "p0", cardId: decks[0][0] });
     return reduce(s, { type: "START_HUNT", playerId: "p0", optionIndex: 0 });
   }
@@ -290,9 +290,9 @@ describe("shared dice hunt (START_HUNT / HUNT_ROLL / HUNT_FLEE)", () => {
 
   it("a hunt win that fills the wall finishes the game", () => {
     let s = startHunt([["mammoet#0"]]); // F4, requires tribe 2 (default)
-    s = { ...s, painting: 4, hunt: { ...s.hunt!, preyHp: 1 } };
+    s = { ...s, painting: 5, hunt: { ...s.hunt!, preyHp: 1 } };
     s = reduce(s, { type: "HUNT_ROLL", playerId: "p0", seq: 0, dice: [6, 6] }); // 12 − 4 = 8 ≥ 7
-    expect(s.painting).toBe(5);
+    expect(s.painting).toBe(6);
     expect(s.phase).toBe("won");
     expect(s.status).toBe("finished");
   });
@@ -379,10 +379,10 @@ describe("painting & win", () => {
 
   it("reaching the painting goal wins the game", () => {
     let s = startGame([["rotswand#0"]]);
-    s = { ...s, painting: 4, tools: ["fakkel"], stock: { ...s.stock, flint: 2 } };
+    s = { ...s, painting: 5, tools: ["fakkel"], stock: { ...s.stock, flint: 2 } };
     s = reduce(s, { type: "PICK", playerId: "p0", cardId: "rotswand#0" });
     s = reduce(s, { type: "RESOLVE", playerId: "p0", optionIndex: 0 });
-    expect(s.painting).toBe(5);
+    expect(s.painting).toBe(6);
     expect(s.phase).toBe("won");
     expect(s.status).toBe("finished");
   });
@@ -401,15 +401,31 @@ describe("danger & loss", () => {
 });
 
 describe("night cycle", () => {
-  it("feeds the tribe and advances to night when decks empty", () => {
+  it("ends the day, feeds the tribe, and opens the night transition", () => {
     let s = startGame([["vlakte#0"]]);
     s = reduce(s, { type: "PICK", playerId: "p0", cardId: "vlakte#0" });
     s = reduce(s, { type: "RESOLVE", playerId: "p0", optionIndex: 0 }); // wood, no food
     expect(s.phase).toBe("night");
+    expect(s.transition).toEqual({ to: "night" }); // pak-in scherm
     expect(s.stock.food).toBe(1); // 3 - tribe(2)
     expect(s.skulls).toBe(0);
-    // new day deals fresh decks
-    s = reduce(s, { type: "ADVANCE_NIGHT", decks: [["vlakte#0"]] });
+    // START_NIGHT deals the night deck and clears the transition
+    s = reduce(s, { type: "START_NIGHT", decks: [["knekelveld#0"]] });
+    expect(s.phase).toBe("night");
+    expect(s.transition).toBeUndefined();
+    expect(s.players[0].deck).toEqual(["knekelveld#0"]);
+  });
+
+  it("a played-out night opens the day transition, then START_DAY begins day 2", () => {
+    let s = startGame([["vlakte#0"]]);
+    s = reduce(s, { type: "PICK", playerId: "p0", cardId: "vlakte#0" });
+    s = reduce(s, { type: "RESOLVE", playerId: "p0", optionIndex: 0 });
+    s = reduce(s, { type: "START_NIGHT", decks: [["knekelveld#0"]] }); // gather bones
+    s = reduce(s, { type: "PICK", playerId: "p0", cardId: "knekelveld#0" });
+    s = reduce(s, { type: "RESOLVE", playerId: "p0", optionIndex: 0 });
+    expect(s.stock.bones).toBe(3); // knekelveld grants 3 bones
+    expect(s.transition).toEqual({ to: "day" });
+    s = reduce(s, { type: "START_DAY", decks: [["vlakte#0"]] });
     expect(s.phase).toBe("day");
     expect(s.day).toBe(2);
     expect(s.players[0].deck).toEqual(["vlakte#0"]);
