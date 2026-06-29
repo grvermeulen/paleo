@@ -76,6 +76,8 @@ export interface LogEntry {
   text: string;
 }
 
+export type Difficulty = "easy" | "normal" | "hard";
+
 /** An in-progress shared dice hunt: players take turns rolling against a prey. */
 export interface HuntState {
   cardId: string;
@@ -97,6 +99,10 @@ export interface HuntState {
     ok: boolean;
     dmg?: number;
   };
+  // Once the hunt is decided it lingers (done=true) to show a result screen,
+  // until a HUNT_DISMISS clears it and the day continues.
+  done?: boolean;
+  result?: { outcome: "win" | "lose"; skulls?: number };
 }
 
 export interface GameState {
@@ -116,6 +122,8 @@ export interface GameState {
   day: number;
   log: LogEntry[];
   lastEvent: GameEvent | null;
+  /** Chosen in the lobby; scales how punishing the hunt dice are. */
+  difficulty: Difficulty;
   /** Set while a shared dice hunt is in progress (takes over the UI). */
   hunt?: HuntState;
 }
@@ -134,6 +142,8 @@ export type Action =
   | { type: "START_HUNT"; playerId: string; optionIndex: number }
   | { type: "HUNT_ROLL"; playerId: string; seq: number; dice: [number, number] }
   | { type: "HUNT_FLEE"; playerId: string }
+  | { type: "HUNT_DISMISS"; playerId: string }
+  | { type: "SET_DIFFICULTY"; difficulty: Difficulty }
   | { type: "GIVE_UP"; playerId: string }
   | { type: "ADVANCE_NIGHT"; decks: string[][] }
   | { type: "RESET" };
@@ -201,6 +211,7 @@ export function createLobbyState(missionId: string = DEFAULT_MISSION.id): GameSt
     day: 1,
     log: [],
     lastEvent: null,
+    difficulty: "normal",
   };
 }
 
@@ -214,18 +225,26 @@ export function weaponStrength(state: GameState): number {
 
 // ---- Dice-hunt tuning (exported so the UI can show the same math) ----------
 // 2d6 per roll. Attack adds your weapons and subtracts prey strength (low stats
-// → minpunten); you must reach HIT to wound it. Dodge adds your tribe size and
-// must reach 6 + prey strength. Tuned "pittig": weak stats fail often.
-export const HUNT_HIT = 7;
-export const HUNT_CRIT = 11;
-export const huntPreyMaxHp = (fight: number) => 2 + fight;
-export const huntTribeMaxHp = (tribe: number) => 3 + tribe;
-export const huntDodgeTarget = (fight: number) => 6 + fight;
+// → minpunten); you must reach the hit target to wound it. Dodge adds your tribe
+// size and must reach 6 + prey strength. Tuned "pittig"; difficulty nudges it.
+const DIFF_MOD: Record<Difficulty, { preyHp: number; tribeHp: number; hit: number; dodge: number }> = {
+  easy: { preyHp: -1, tribeHp: 2, hit: -1, dodge: -1 },
+  normal: { preyHp: 0, tribeHp: 0, hit: 0, dodge: 0 },
+  hard: { preyHp: 2, tribeHp: -1, hit: 1, dodge: 1 },
+};
+
+export const huntPreyMaxHp = (fight: number, diff: Difficulty = "normal") =>
+  Math.max(1, 2 + fight + DIFF_MOD[diff].preyHp);
+export const huntTribeMaxHp = (tribe: number, diff: Difficulty = "normal") =>
+  Math.max(1, 3 + tribe + DIFF_MOD[diff].tribeHp);
+export const huntHitTarget = (diff: Difficulty = "normal") => 7 + DIFF_MOD[diff].hit;
+export const huntDodgeTarget = (fight: number, diff: Difficulty = "normal") =>
+  6 + fight + DIFF_MOD[diff].dodge;
 export const huntBite = (fight: number) => Math.max(1, Math.ceil(fight / 2));
 export const huntAttackTotal = (dice: [number, number], strength: number, fight: number) =>
   dice[0] + dice[1] + strength - fight;
-export const huntAttackDamage = (total: number) =>
-  total >= HUNT_CRIT ? 2 : total >= HUNT_HIT ? 1 : 0;
+export const huntAttackDamage = (total: number, diff: Difficulty = "normal") =>
+  total >= huntHitTarget(diff) + 4 ? 2 : total >= huntHitTarget(diff) ? 1 : 0;
 export const huntDodgeTotal = (dice: [number, number], tribe: number) =>
   dice[0] + dice[1] + tribe;
 
@@ -503,7 +522,13 @@ export function reduce(state: GameState, action: Action): GameState {
         day: 1,
         log: [{ day: 1, text: "☀️ Dag 1 breekt aan." }],
         lastEvent: { kind: "dawn" },
+        difficulty: state.difficulty, // carry the lobby choice into the game
       };
+    }
+
+    case "SET_DIFFICULTY": {
+      if (state.status !== "lobby") return state; // only before the game starts
+      return { ...state, difficulty: action.difficulty };
     }
 
     case "PICK": {
@@ -661,10 +686,10 @@ export function reduce(state: GameState, action: Action): GameState {
           cardId: card.id,
           optionIndex: action.optionIndex,
           initiatorId: player.id,
-          preyHp: huntPreyMaxHp(opt.fight),
-          preyMaxHp: huntPreyMaxHp(opt.fight),
-          tribeHp: huntTribeMaxHp(state.tribe),
-          tribeMaxHp: huntTribeMaxHp(state.tribe),
+          preyHp: huntPreyMaxHp(opt.fight, state.difficulty),
+          preyMaxHp: huntPreyMaxHp(opt.fight, state.difficulty),
+          tribeHp: huntTribeMaxHp(state.tribe, state.difficulty),
+          tribeMaxHp: huntTribeMaxHp(state.tribe, state.difficulty),
           order,
           turn: 0,
           step: "attack",
@@ -677,7 +702,7 @@ export function reduce(state: GameState, action: Action): GameState {
 
     case "HUNT_ROLL": {
       const hunt = state.hunt;
-      if (!hunt) return state;
+      if (!hunt || hunt.done) return state;
       if (action.seq !== hunt.seq) return state; // stale / duplicate roll
       if (action.playerId !== hunt.order[hunt.turn]) return state; // not your turn
       const d = action.dice;
@@ -690,16 +715,26 @@ export function reduce(state: GameState, action: Action): GameState {
       const roller = findPlayer(state, action.playerId);
       const name = roller?.name ?? "Speler";
 
+      // End the hunt but keep it on screen (done=true) as a result summary; the
+      // reward/penalty is applied now, the day resumes only on HUNT_DISMISS.
       const closeWith = (outcome: "win" | "lose"): GameState => {
-        let next = applyHuntOutcome(closeHunt(state, hunt), opt, outcome, action.playerId, name, card.title);
-        next = settle(next);
-        if (isFinished(next)) return next;
-        return maybeEnterNight(next);
+        const initiator = state.players.find((p) => p.id === hunt.initiatorId);
+        const cleared: GameState = {
+          ...state,
+          players: state.players.map((p) =>
+            p.id === hunt.initiatorId ? { ...p, active: null } : p,
+          ),
+          discard: initiator?.active ? [...state.discard, initiator.active] : [...state.discard],
+        };
+        const skulls = outcome === "lose" ? Math.max(1, F - weaponStrength(state)) : undefined;
+        let next = applyHuntOutcome(cleared, opt, outcome, action.playerId, name, card.title);
+        next = { ...next, hunt: { ...hunt, done: true, result: { outcome, skulls } } };
+        return settle(next); // whole-game win/lose still resolves; night waits for dismiss
       };
 
       if (hunt.step === "attack") {
         const total = huntAttackTotal(d, weaponStrength(state), F);
-        const dmg = huntAttackDamage(total);
+        const dmg = huntAttackDamage(total, state.difficulty);
         const preyHp = Math.max(0, hunt.preyHp - dmg);
         if (preyHp <= 0) return closeWith("win");
         return {
@@ -723,7 +758,7 @@ export function reduce(state: GameState, action: Action): GameState {
 
       // dodge step
       const total = huntDodgeTotal(d, state.tribe);
-      const ok = total >= huntDodgeTarget(F);
+      const ok = total >= huntDodgeTarget(F, state.difficulty);
       const nextTurn = (hunt.turn + 1) % hunt.order.length;
       if (!ok) {
         const bite = huntBite(F);
@@ -769,6 +804,15 @@ export function reduce(state: GameState, action: Action): GameState {
         log: pushLog(next, `🏃 ${findPlayer(state, hunt.initiatorId)?.name ?? "Speler"} blaast de jacht af.`),
       };
       next = settle(next);
+      if (isFinished(next)) return next;
+      return maybeEnterNight(next);
+    }
+
+    case "HUNT_DISMISS": {
+      // Close the result screen of a decided hunt and let the day continue.
+      const hunt = state.hunt;
+      if (!hunt || !hunt.done) return state;
+      const next = settle({ ...state, hunt: undefined });
       if (isFinished(next)) return next;
       return maybeEnterNight(next);
     }

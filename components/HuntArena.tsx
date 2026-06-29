@@ -7,8 +7,10 @@ import {
   weaponStrength,
   cardOf,
   huntDodgeTarget,
-  HUNT_HIT,
+  huntHitTarget,
 } from "@/lib/engine";
+import { RES_META, TRIBE, PAINTING } from "@/lib/paleo/display";
+import { TOOLS } from "@/lib/paleo/cards";
 import Mammoth from "./Mammoth";
 
 /**
@@ -43,6 +45,7 @@ export default function HuntArena({
   isHost = false,
   onRoll,
   onFlee,
+  onDismiss,
 }: {
   state: GameState;
   meId: string;
@@ -50,6 +53,7 @@ export default function HuntArena({
   isHost?: boolean;
   onRoll: (dice: [number, number]) => void;
   onFlee?: () => void;
+  onDismiss?: () => void;
 }) {
   const hunt = state.hunt;
   const [rolling, setRolling] = useState(false);
@@ -90,6 +94,51 @@ export default function HuntArena({
   const shownDice: [number, number] = rolling ? faces : hunt.lastRoll?.dice ?? [1, 1];
   const accent = card.hint === "danger" ? "var(--color-ember)" : "var(--color-ochre-500)";
   const attackStep = hunt.step === "attack";
+
+  // ---- Result screen (conclusion + consequences) ------------------------
+  if (hunt.done && hunt.result) {
+    const win = hunt.result.outcome === "win";
+    const chips = win ? rewardChips(opt?.reward) : [`+${hunt.result.skulls} 💀`];
+    const canDismiss = !!onDismiss && (meId === hunt.initiatorId || isHost);
+    return (
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ type: "spring", stiffness: 220, damping: 18 }}
+        className="card-pop w-full max-w-md overflow-hidden p-0"
+        data-testid="hunt-result"
+      >
+        <div className="flex items-center gap-2 px-4 py-2 text-white" style={{ backgroundColor: win ? "var(--color-moss-500)" : "var(--color-ember)" }}>
+          <h3 className="text-stroke text-lg font-extrabold">{win ? "🎉 Jacht geslaagd" : "💀 Jacht mislukt"}</h3>
+        </div>
+        <div className="flex flex-col items-center gap-3 p-5 text-center">
+          <span className="text-5xl" aria-hidden>{win ? "🍖" : "🩸"}</span>
+          <p className="font-semibold text-[var(--color-stone-700)]">
+            {win ? `De stam versloeg ${card.title}.` : `${card.title} ontsnapte.`}
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {chips.map((c, i) => (
+              <span
+                key={i}
+                className={`rounded-full border-2 border-[var(--color-ink)] px-3 py-1 text-lg font-extrabold ${
+                  win ? "bg-[var(--color-moss-300)]/50" : "bg-[var(--color-ember)]/15"
+                }`}
+              >
+                {c}
+              </span>
+            ))}
+          </div>
+          {canDismiss ? (
+            <button onClick={onDismiss} className="btn-pop bg-[var(--color-moss-300)]">
+              Verder ▶
+            </button>
+          ) : (
+            <p className="text-sm font-bold text-[var(--color-stone-500)]">Wachten op de stam…</p>
+          )}
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div
@@ -154,8 +203,8 @@ export default function HuntArena({
           {/* threshold hint */}
           <p className="text-center text-xs font-semibold text-[var(--color-stone-700)]">
             {attackStep
-              ? `Raak bij 2d6 + ${W} − ${F} ≥ ${HUNT_HIT}`
-              : `Ontwijk bij 2d6 + stam ${state.tribe} ≥ ${huntDodgeTarget(F)}`}
+              ? `Raak bij 2d6 + ${W} − ${F} ≥ ${huntHitTarget(state.difficulty)}`
+              : `Ontwijk bij 2d6 + stam ${state.tribe} ≥ ${huntDodgeTarget(F, state.difficulty)}`}
           </p>
 
           {canRoll ? (
@@ -180,6 +229,19 @@ export default function HuntArena({
       </div>
     </motion.div>
   );
+}
+
+function rewardChips(reward?: import("@/lib/paleo/cards").Reward): string[] {
+  if (!reward) return [];
+  const out: string[] = [];
+  if (reward.wood) out.push(`+${reward.wood} ${RES_META.wood.emoji}`);
+  if (reward.flint) out.push(`+${reward.flint} ${RES_META.flint.emoji}`);
+  if (reward.food) out.push(`+${reward.food} ${RES_META.food.emoji}`);
+  if (reward.ideas) out.push(`+${reward.ideas} ${RES_META.ideas.emoji}`);
+  if (reward.tribe) out.push(`+${reward.tribe} ${TRIBE}`);
+  if (reward.painting) out.push(`+${reward.painting} ${PAINTING}`);
+  if (reward.tools) for (const t of reward.tools) out.push(`${TOOLS[t].emoji} ${TOOLS[t].name}`);
+  return out.length ? out : ["✓"];
 }
 
 function rollText(

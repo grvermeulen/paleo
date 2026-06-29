@@ -13,6 +13,7 @@ import {
 import {
   type Action,
   type GameState,
+  type Difficulty,
   cardOf,
   reduce,
   weaponStrength,
@@ -36,6 +37,7 @@ import CardView from "@/components/CardView";
 import WinScreen from "@/components/WinScreen";
 import LoseScreen from "@/components/LoseScreen";
 import HuntArena from "@/components/HuntArena";
+import DifficultyPicker from "@/components/DifficultyPicker";
 import GameSounds from "@/components/GameSounds";
 import SoundMenu from "@/components/SoundMenu";
 import { HowToPlayButton } from "@/components/HowToPlay";
@@ -53,6 +55,14 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const playedVersion = useRef(0);
   const [actErr, setActErr] = useState<string | null>(null);
+  const [nightNote, setNightNote] = useState<string | null>(null);
+
+  // Briefly show the "saved for the night" confirmation, then clear it.
+  useEffect(() => {
+    if (!nightNote) return;
+    const t = setTimeout(() => setNightNote(null), 3500);
+    return () => clearTimeout(t);
+  }, [nightNote]);
 
   const live = game.state;
   const view = optimistic ?? live;
@@ -117,8 +127,7 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
   // Shake to pick a random card from the current offer.
   const shake = useShake(() => {
     if (!canPick) return;
-    const pick = offer[Math.floor(Math.random() * offer.length)];
-    dispatch({ type: "PICK", playerId: meId, cardId: pick });
+    pickCard(offer[Math.floor(Math.random() * offer.length)]);
   }, canPick);
 
   async function doNextDay() {
@@ -170,6 +179,22 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
     if (view?.hunt) dispatch({ type: "HUNT_FLEE", playerId: meId });
   }
 
+  function dismissHunt() {
+    if (view?.hunt?.done) dispatch({ type: "HUNT_DISMISS", playerId: meId });
+  }
+
+  // Picking a night card sets it aside instead of showing an action — confirm it
+  // so the card doesn't seem to vanish.
+  function pickCard(inst: string) {
+    const c = cardOf(inst);
+    dispatch({ type: "PICK", playerId: meId, cardId: inst });
+    if (c.night) setNightNote(c.title);
+  }
+
+  function changeDifficulty(d: Difficulty) {
+    dispatch({ type: "SET_DIFFICULTY", difficulty: d });
+  }
+
   if (game.loading) return <Centered>Laden…</Centered>;
   if (game.error) return <Centered>{game.error}</Centered>;
 
@@ -207,6 +232,11 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
             ))}
           </ul>
         </div>
+        <DifficultyPicker
+          value={view?.difficulty ?? "normal"}
+          canEdit={isHost}
+          onChange={changeDifficulty}
+        />
         {isHost ? (
           <button onClick={() => game.gameId && startGame(game.gameId)} className="btn-pop bg-[var(--color-moss-300)]">
             🔥 Start het avontuur
@@ -248,6 +278,12 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
         </div>
       )}
 
+      {nightNote && (
+        <div className="card-pop border-[var(--color-ink)] bg-[var(--color-clay-100)] p-2 text-center text-sm font-bold text-[var(--color-stone-700)]">
+          🌙 “{nightNote}” bewaard voor de nacht — wordt automatisch uitgevoerd.
+        </div>
+      )}
+
       {finished ? (
         view.phase === "won" ? (
           <WinScreen day={view.day} canReplay={isHost} onReplay={doReplay} />
@@ -270,7 +306,7 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
           </button>
         </section>
       ) : view.hunt ? (
-        <HuntArena state={view} meId={meId} isHost={isHost} onRoll={rollHunt} onFlee={fleeHunt} />
+        <HuntArena state={view} meId={meId} isHost={isHost} onRoll={rollHunt} onFlee={fleeHunt} onDismiss={dismissHunt} />
       ) : !myPlayer ? (
         <Centered>Je kijkt mee met deze ronde.</Centered>
       ) : myPlayer.active ? (
@@ -297,7 +333,7 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
               <CardBack
                 key={inst}
                 hint={cardOf(inst).hint}
-                onClick={() => dispatch({ type: "PICK", playerId: meId, cardId: inst })}
+                onClick={() => pickCard(inst)}
               />
             ))}
           </div>

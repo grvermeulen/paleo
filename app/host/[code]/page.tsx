@@ -18,6 +18,8 @@ import GameSounds from "@/components/GameSounds";
 import SoundMenu from "@/components/SoundMenu";
 import { HowToPlayButton } from "@/components/HowToPlay";
 import HuntArena from "@/components/HuntArena";
+import DifficultyPicker from "@/components/DifficultyPicker";
+import type { Difficulty } from "@/lib/engine";
 
 export default function HostPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = use(params);
@@ -86,6 +88,26 @@ export default function HostPage({ params }: { params: Promise<{ code: string }>
     }
   }
 
+  async function hostDismiss() {
+    if (!game.gameId || !game.state?.hunt?.done) return;
+    try {
+      const v = await applyAction(game.gameId, { type: "HUNT_DISMISS", playerId: meId });
+      game.notify(v);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function changeDifficulty(d: Difficulty) {
+    if (!game.gameId) return;
+    try {
+      const v = await applyAction(game.gameId, { type: "SET_DIFFICULTY", difficulty: d });
+      game.notify(v);
+    } catch {
+      /* ignore */
+    }
+  }
+
   async function doReset() {
     if (!game.gameId) return;
     setBusy(true);
@@ -115,6 +137,13 @@ export default function HostPage({ params }: { params: Promise<{ code: string }>
       <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col items-center gap-6 px-5 py-8">
         <Header code={code} />
         <HowToPlayButton label="📖 Nieuw? Bekijk de uitleg" />
+        <div className="w-full max-w-md">
+          <DifficultyPicker
+            value={state?.difficulty ?? "normal"}
+            canEdit={isHost}
+            onChange={changeDifficulty}
+          />
+        </div>
         <div className="grid w-full gap-6 md:grid-cols-2">
           <section className="card-pop flex flex-col items-center gap-4 p-6">
             <h2 className="text-2xl font-extrabold">Doe mee!</h2>
@@ -218,6 +247,7 @@ export default function HostPage({ params }: { params: Promise<{ code: string }>
               connected={connected}
               isHost={isHost}
               onRoll={hostRoll}
+              onDismiss={hostDismiss}
             />
           )}
 
