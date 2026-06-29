@@ -35,7 +35,7 @@ import CardBack from "@/components/CardBack";
 import CardView from "@/components/CardView";
 import WinScreen from "@/components/WinScreen";
 import LoseScreen from "@/components/LoseScreen";
-import HuntMiniGame from "@/components/HuntMiniGame";
+import HuntArena from "@/components/HuntArena";
 import GameSounds from "@/components/GameSounds";
 import SoundMenu from "@/components/SoundMenu";
 import { HowToPlayButton } from "@/components/HowToPlay";
@@ -53,8 +53,6 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const playedVersion = useRef(0);
   const [actErr, setActErr] = useState<string | null>(null);
-  // When set, the chosen fight option is being played as the hunt mini-game.
-  const [hunt, setHunt] = useState<{ optionIndex: number } | null>(null);
 
   const live = game.state;
   const view = optimistic ?? live;
@@ -143,7 +141,7 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
     }
   }
 
-  // Choosing an option: fight options open the hunt mini-game (unless quick
+  // Choosing an option: fight options start the shared dice hunt (unless quick
   // resolve / reduced motion is on); everything else resolves immediately.
   function chooseOption(i: number) {
     if (!myPlayer?.active || !view) return;
@@ -157,12 +155,19 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
       dispatch({ type: "RESOLVE_HUNT", playerId: meId, optionIndex: i, outcome });
       return;
     }
-    setHunt({ optionIndex: i });
+    dispatch({ type: "START_HUNT", playerId: meId, optionIndex: i });
   }
 
-  function resolveHunt(outcome: "win" | "lose") {
-    if (hunt) dispatch({ type: "RESOLVE_HUNT", playerId: meId, optionIndex: hunt.optionIndex, outcome });
-    setHunt(null);
+  // The hunt lives in shared state; the current-turn player's roll carries the
+  // dice so every peer reduces the same result.
+  function rollHunt(dice: [number, number]) {
+    const h = view?.hunt;
+    if (!game.gameId || !h) return;
+    dispatch({ type: "HUNT_ROLL", playerId: h.order[h.turn], seq: h.seq, dice });
+  }
+
+  function fleeHunt() {
+    if (view?.hunt) dispatch({ type: "HUNT_FLEE", playerId: meId });
   }
 
   if (game.loading) return <Centered>Laden…</Centered>;
@@ -264,16 +269,10 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
             ☀️ Begin dag {view.day + 1}
           </button>
         </section>
+      ) : view.hunt ? (
+        <HuntArena state={view} meId={meId} isHost={isHost} onRoll={rollHunt} onFlee={fleeHunt} />
       ) : !myPlayer ? (
         <Centered>Je kijkt mee met deze ronde.</Centered>
-      ) : myPlayer.active && hunt ? (
-        <HuntMiniGame
-          card={cardOf(myPlayer.active)}
-          option={cardOf(myPlayer.active).options[hunt.optionIndex]}
-          state={view}
-          onComplete={resolveHunt}
-          onCancel={() => setHunt(null)}
-        />
       ) : myPlayer.active ? (
         <div className="flex flex-col items-center gap-2">
           <p className="text-center text-sm font-bold text-[var(--color-stone-700)]">

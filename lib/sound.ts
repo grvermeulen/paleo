@@ -472,5 +472,13 @@ export function playEventSfx(event: GameEvent): void {
       sound.play("lose");
       sound.vibrate([0, 120, 60, 200]);
       break;
+    case "hit":
+      sound.play("hit");
+      sound.vibrate([0, 40, 30, 40]);
+      break;
+    case "dodge":
+      sound.play("dodge");
+      sound.vibrate(20);
+      break;
   }
 }

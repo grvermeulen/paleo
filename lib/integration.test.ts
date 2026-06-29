@@ -350,4 +350,27 @@ describe("integration: full game through the api layer", () => {
     expect(after.players[0].active).toBeNull(); // card consumed (retry-safe)
     expect(store.paleo_games[0].version).toBe(4);
   });
+
+  it("a shared dice hunt (START_HUNT → HUNT_ROLL) rides the api layer", async () => {
+    let s = createLobbyState();
+    s = { ...s, players: [{ id: "p1", name: "Oeg", deck: [], active: null }] };
+    s = reduce(s, { type: "START", decks: [["hert#0", "vlakte#1"]] });
+    s = reduce(s, { type: "PICK", playerId: "p1", cardId: "hert#0" });
+    store.paleo_games = [{ id: "g1", code: "DICE", status: s.status, state: s, version: 5 }];
+
+    // Opening the hunt is one version-guarded write.
+    let v = await applyAction("g1", { type: "START_HUNT", playerId: "p1", optionIndex: 0 });
+    expect(v).toBe(6);
+    let st = store.paleo_games[0].state as GameState;
+    expect(st.hunt?.preyHp).toBe(4);
+    expect(st.hunt?.step).toBe("attack");
+
+    // A roll is its own action; the dice ride the payload so the write is deterministic.
+    v = await applyAction("g1", { type: "HUNT_ROLL", playerId: "p1", seq: 0, dice: [6, 6] });
+    expect(v).toBe(7);
+    st = store.paleo_games[0].state as GameState;
+    expect(st.hunt?.preyHp).toBe(3); // hert: 12 + 0 − 2 = 10 → hit (−1)
+    expect(st.hunt?.step).toBe("dodge");
+    expect(st.hunt?.seq).toBe(1);
+  });
 });
