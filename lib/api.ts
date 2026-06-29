@@ -270,8 +270,13 @@ export async function touchPresence(
     .eq("player_id", playerId);
 }
 
-/** Reset a finished game back to the lobby so the same group can replay. */
-export async function resetToLobby(gameId: string): Promise<void> {
+/**
+ * Reset a finished game back to the lobby so the same group can replay. Returns
+ * the new (or current, if already in the lobby) version so the caller can
+ * broadcast a `notify` ping — otherwise peers stuck on the win/lose screen,
+ * whose version-poll is paused while the game is "finished", never refresh.
+ */
+export async function resetToLobby(gameId: string): Promise<number> {
   for (let attempt = 0; attempt < 6; attempt++) {
     if (attempt > 0) await sleep(Math.min(80 * 2 ** (attempt - 1), 1000));
     const { data: row, error: readErr } = await supabase
@@ -280,19 +285,21 @@ export async function resetToLobby(gameId: string): Promise<void> {
       .eq("id", gameId)
       .single();
     if (readErr || !row) throw readErr ?? new Error("Spel niet gevonden.");
-    if (row.status === "lobby") return;
+    if (row.status === "lobby") return row.version;
 
+    const nextVersion = row.version + 1;
     const { data: updated, error } = await supabase
       .from("paleo_games")
       .update({
         state: createLobbyState(DEFAULT_MISSION.id),
         status: "lobby",
-        version: row.version + 1,
+        version: nextVersion,
       })
       .eq("id", gameId)
       .eq("version", row.version)
       .select("id");
     if (error) throw error;
-    if ((updated?.length ?? 0) > 0) return;
+    if ((updated?.length ?? 0) > 0) return nextVersion;
   }
+  throw new Error("Kon het spel niet herstarten — probeer opnieuw.");
 }

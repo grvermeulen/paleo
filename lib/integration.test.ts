@@ -135,6 +135,7 @@ import {
   startGame,
   applyAction,
   advanceNight,
+  resetToLobby,
 } from "./api";
 import {
   type GameState,
@@ -299,5 +300,30 @@ describe("integration: full game through the api layer", () => {
     // The resolved card was reshuffled back into the new day's deck.
     expect(after.players[0].deck).toEqual(["vlakte#0"]);
     expect(store.paleo_games[0].version).toBe(6);
+  });
+
+  it("resetToLobby returns the bumped version so peers can be notified", async () => {
+    // A finished game row, the way the win/lose screen sees it.
+    let s = createLobbyState();
+    s = { ...s, status: "finished", phase: "won" };
+    store.paleo_games = [
+      { id: "g1", code: "DONE", status: "finished", state: s, version: 9 },
+    ];
+
+    const v = await resetToLobby("g1");
+
+    // The new version is returned (not void) — the host broadcasts it via notify
+    // so every phone leaves the win/lose screen for the fresh lobby.
+    expect(v).toBe(10);
+    expect(store.paleo_games[0].version).toBe(10);
+    expect(store.paleo_games[0].status).toBe("lobby");
+    const after = store.paleo_games[0].state as GameState;
+    expect(after.status).toBe("lobby");
+    expect(after.phase).not.toBe("won");
+
+    // Idempotent: resetting an already-lobby game returns its current version.
+    const again = await resetToLobby("g1");
+    expect(again).toBe(10);
+    expect(store.paleo_games[0].version).toBe(10);
   });
 });
