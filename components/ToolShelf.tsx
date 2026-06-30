@@ -1,6 +1,6 @@
 import { TOOLS, type ToolId } from "@/lib/paleo/cards";
 
-const ORDER: ToolId[] = ["vuur", "fakkel", "speer", "bijl", "knots", "mand"];
+const ORDER: ToolId[] = ["vuur", "fakkel", "speer", "botspeer", "bijl", "knots", "mand"];
 
 /** The tribe's invention shelf: owned tools highlighted, the rest faded. */
 export default function ToolShelf({

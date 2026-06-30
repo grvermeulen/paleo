@@ -17,6 +17,8 @@ const ANIMALS = [
   "M9 30 q1 -9 7 -10 q3 -6 6 -4 q-1 3 -3 4 q6 1 7 10 m-13 -6 l0 6 m9 -6 l0 6",
   // hand print
   "M16 32 l0 -8 m-4 8 l0 -10 m4 2 l0 -6 m4 6 l0 -5 m4 7 l0 -3",
+  // fish
+  "M8 22 q8 -7 18 0 q-8 7 -18 0 z m18 0 l5 -4 l0 8 z",
 ];
 
 export default function CavePainting({
@@ -28,7 +30,10 @@ export default function CavePainting({
 }) {
   return (
     <div className="relative mx-auto w-full max-w-md overflow-hidden rounded-2xl border-4 border-[var(--color-ink)] bg-gradient-to-b from-[#caa978] to-[#a8814f] p-2 shadow-[var(--shadow-pop)]">
-      <div className="grid grid-cols-5 gap-2">
+      <div
+        className="grid gap-1.5"
+        style={{ gridTemplateColumns: `repeat(${goal}, minmax(0, 1fr))` }}
+      >
         {Array.from({ length: goal }).map((_, i) => {
           const done = i < painting;
           return (

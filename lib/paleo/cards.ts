@@ -40,7 +40,7 @@ export const TOOLS: Record<ToolId, Tool> = {
   bijl: { id: "bijl", name: "Bijl", emoji: "🪓", strength: 1, blurb: "Velt dikke bomen en verdedigt." },
   mand: { id: "mand", name: "Mand", emoji: "🧺", strength: 0, blurb: "Draag meer voedsel mee naar huis." },
   fakkel: { id: "fakkel", name: "Fakkel", emoji: "🕯️", strength: 0, nightStrength: 2, blurb: "Licht in de grot — schilder de muur, verjaag de nacht." },
-  botspeer: { id: "botspeer", name: "Botspeer", emoji: "🦴", strength: 3, nightStrength: 3, blurb: "Uit bot geslepen 's nachts — vlijmscherp, dag en nacht." },
+  botspeer: { id: "botspeer", name: "Botspeer", emoji: "🔱", strength: 3, nightStrength: 3, blurb: "Uit bot geslepen 's nachts — vlijmscherp, dag en nacht." },
 };
 
 /** What a card option costs (consumed when resolved). */
