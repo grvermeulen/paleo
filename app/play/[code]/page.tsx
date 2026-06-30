@@ -279,7 +279,7 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
         </div>
         <CavePainting painting={view.painting} goal={view.paintingGoal} />
         <ResourceBar stock={view.stock} tribe={view.tribe} size="sm" />
-        <ToolShelf tools={view.tools} compact />
+        <ToolShelf tools={view.tools} active={view.activeTools} compact />
         <SkullTrack skulls={view.skulls} limit={view.skullLimit} size="sm" />
       </section>
 

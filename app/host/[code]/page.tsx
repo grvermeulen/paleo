@@ -243,7 +243,7 @@ export default function HostPage({ params }: { params: Promise<{ code: string }>
 
           <div className="flex w-full flex-col items-center gap-3">
             <ResourceBar stock={state.stock} tribe={state.tribe} size="lg" />
-            <ToolShelf tools={state.tools} />
+            <ToolShelf tools={state.tools} active={state.activeTools} />
             <SkullTrack skulls={state.skulls} limit={state.skullLimit} size="lg" />
           </div>
 
