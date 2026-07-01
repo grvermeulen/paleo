@@ -134,7 +134,9 @@ import {
   joinGame,
   startGame,
   applyAction,
-  advanceNight,
+  startNight,
+  startDay,
+  resetToLobby,
 } from "./api";
 import {
   type GameState,
@@ -229,8 +231,10 @@ describe("integration: full game through the api layer", () => {
       const s = currentState();
       if (s.status === "finished") break;
 
-      if (s.phase === "night") {
-        await advanceNight(gameId);
+      // Confirm a day↔night transition (carry the tools we already have).
+      if (s.transition) {
+        if (s.transition.to === "night") await startNight(gameId);
+        else await startDay(gameId);
         continue;
       }
 
@@ -278,26 +282,98 @@ describe("integration: full game through the api layer", () => {
     );
   });
 
-  it("advanceNight deals a fresh day via the api layer", async () => {
-    // Build a state that has reached the night phase (decks emptied).
+  it("startNight deals the night deck via the api layer", async () => {
+    // Build a state that has reached the night transition (day decks emptied).
     let s = createLobbyState();
     s = { ...s, players: [{ id: "p1", name: "Oeg", deck: [], active: null }] };
     s = reduce(s, { type: "START", decks: [["vlakte#0"]] });
     s = reduce(s, { type: "PICK", playerId: "p1", cardId: "vlakte#0" });
     s = reduce(s, { type: "RESOLVE", playerId: "p1", optionIndex: 0 });
     expect(s.phase).toBe("night");
+    expect(s.transition).toEqual({ to: "night" });
 
     store.paleo_games = [
       { id: "g1", code: "NGHT", status: s.status, state: s, version: 5 },
     ];
 
-    const v = await advanceNight("g1");
+    const v = await startNight("g1");
     expect(v).toBe(6);
     const after = store.paleo_games[0].state as GameState;
-    expect(after.phase).toBe("day");
-    expect(after.day).toBe(2);
-    // The resolved card was reshuffled back into the new day's deck.
-    expect(after.players[0].deck).toEqual(["vlakte#0"]);
+    expect(after.phase).toBe("night");
+    expect(after.transition).toBeUndefined();
+    expect(after.players[0].deck.length).toBeGreaterThan(0); // night deck dealt
     expect(store.paleo_games[0].version).toBe(6);
+  });
+
+  it("resetToLobby returns the bumped version so peers can be notified", async () => {
+    // A finished game row, the way the win/lose screen sees it.
+    let s = createLobbyState();
+    s = { ...s, status: "finished", phase: "won" };
+    store.paleo_games = [
+      { id: "g1", code: "DONE", status: "finished", state: s, version: 9 },
+    ];
+
+    const v = await resetToLobby("g1");
+
+    // The new version is returned (not void) — the host broadcasts it via notify
+    // so every phone leaves the win/lose screen for the fresh lobby.
+    expect(v).toBe(10);
+    expect(store.paleo_games[0].version).toBe(10);
+    expect(store.paleo_games[0].status).toBe("lobby");
+    const after = store.paleo_games[0].state as GameState;
+    expect(after.status).toBe("lobby");
+    expect(after.phase).not.toBe("won");
+
+    // Idempotent: resetting an already-lobby game returns its current version.
+    const again = await resetToLobby("g1");
+    expect(again).toBe(10);
+    expect(store.paleo_games[0].version).toBe(10);
+  });
+
+  it("RESOLVE_HUNT carries a mini-game win through the api layer", async () => {
+    // A started game where p1 holds a hunt card (hert, fight 2, +3 food). The
+    // extra card keeps the day open so night feeding doesn't eat the reward.
+    let s = createLobbyState();
+    s = { ...s, players: [{ id: "p1", name: "Oeg", deck: [], active: null }] };
+    s = reduce(s, { type: "START", decks: [["hert#0", "vlakte#1"]] });
+    s = reduce(s, { type: "PICK", playerId: "p1", cardId: "hert#0" });
+    store.paleo_games = [{ id: "g1", code: "HUNT", status: s.status, state: s, version: 3 }];
+
+    const foodBefore = (store.paleo_games[0].state as GameState).stock.food;
+    const v = await applyAction("g1", {
+      type: "RESOLVE_HUNT",
+      playerId: "p1",
+      optionIndex: 0,
+      outcome: "win",
+    });
+
+    expect(v).toBe(4); // version-guarded write landed
+    const after = store.paleo_games[0].state as GameState;
+    expect(after.stock.food).toBe(foodBefore + 3); // reward applied
+    expect(after.players[0].active).toBeNull(); // card consumed (retry-safe)
+    expect(store.paleo_games[0].version).toBe(4);
+  });
+
+  it("a shared dice hunt (START_HUNT → HUNT_ROLL) rides the api layer", async () => {
+    let s = createLobbyState();
+    s = { ...s, players: [{ id: "p1", name: "Oeg", deck: [], active: null }] };
+    s = reduce(s, { type: "START", decks: [["hert#0", "vlakte#1"]] });
+    s = reduce(s, { type: "PICK", playerId: "p1", cardId: "hert#0" });
+    store.paleo_games = [{ id: "g1", code: "DICE", status: s.status, state: s, version: 5 }];
+
+    // Opening the hunt is one version-guarded write.
+    let v = await applyAction("g1", { type: "START_HUNT", playerId: "p1", optionIndex: 0 });
+    expect(v).toBe(6);
+    let st = store.paleo_games[0].state as GameState;
+    expect(st.hunt?.preyHp).toBe(4);
+    expect(st.hunt?.step).toBe("attack");
+
+    // A roll is its own action; the dice ride the payload so the write is deterministic.
+    v = await applyAction("g1", { type: "HUNT_ROLL", playerId: "p1", seq: 0, dice: [6, 6] });
+    expect(v).toBe(7);
+    st = store.paleo_games[0].state as GameState;
+    expect(st.hunt?.preyHp).toBe(3); // hert: 12 + 0 − 2 = 10 → hit (−1)
+    expect(st.hunt?.step).toBe("dodge");
+    expect(st.hunt?.seq).toBe(1);
   });
 });

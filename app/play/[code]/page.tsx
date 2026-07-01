@@ -4,7 +4,9 @@ import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useGame } from "@/lib/useGame";
 import {
   applyAction,
-  advanceNight,
+  startNight,
+  startDay,
+  selectCarry,
   startGame,
   joinGame,
   resetToLobby,
@@ -13,10 +15,18 @@ import {
 import {
   type Action,
   type GameState,
+  type Difficulty,
   cardOf,
   reduce,
+  weaponStrength,
 } from "@/lib/engine";
-import { getDeviceId, getSavedName, saveName } from "@/lib/identity";
+import {
+  getDeviceId,
+  getSavedName,
+  saveName,
+  getQuickHunt,
+  prefersReducedMotion,
+} from "@/lib/identity";
 import { playEventSfx } from "@/lib/sound";
 import { useShake } from "@/lib/useShake";
 import Mammoth from "@/components/Mammoth";
@@ -28,8 +38,13 @@ import CardBack from "@/components/CardBack";
 import CardView from "@/components/CardView";
 import WinScreen from "@/components/WinScreen";
 import LoseScreen from "@/components/LoseScreen";
+import HuntArena from "@/components/HuntArena";
+import DifficultyPicker from "@/components/DifficultyPicker";
+import CarryScreen from "@/components/CarryScreen";
+import type { ToolId } from "@/lib/paleo/cards";
 import GameSounds from "@/components/GameSounds";
 import SoundMenu from "@/components/SoundMenu";
+import { HowToPlayButton } from "@/components/HowToPlay";
 
 export default function PlayPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = use(params);
@@ -44,6 +59,14 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const playedVersion = useRef(0);
   const [actErr, setActErr] = useState<string | null>(null);
+  const [nightNote, setNightNote] = useState<string | null>(null);
+
+  // Briefly show the "saved for the night" confirmation, then clear it.
+  useEffect(() => {
+    if (!nightNote) return;
+    const t = setTimeout(() => setNightNote(null), 3500);
+    return () => clearTimeout(t);
+  }, [nightNote]);
 
   const live = game.state;
   const view = optimistic ?? live;
@@ -103,23 +126,84 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
     [view, meId],
   );
   const offer = myPlayer && !myPlayer.active ? myPlayer.deck.slice(0, 3) : [];
-  const canPick = !!myPlayer && !myPlayer.active && offer.length > 0 && view?.phase === "day";
+  const isRound = view?.phase === "day" || view?.phase === "night";
+  const canPick = !!myPlayer && !myPlayer.active && offer.length > 0 && isRound && !view?.transition;
 
   // Shake to pick a random card from the current offer.
   const shake = useShake(() => {
     if (!canPick) return;
-    const pick = offer[Math.floor(Math.random() * offer.length)];
-    dispatch({ type: "PICK", playerId: meId, cardId: pick });
+    pickCard(offer[Math.floor(Math.random() * offer.length)]);
   }, canPick);
 
-  async function doNextDay() {
-    if (!game.gameId) return;
+  // Confirm a day↔night transition: carry the chosen tools, then deal the round.
+  async function confirmTransition(tools: ToolId[]) {
+    const to = view?.transition?.to;
+    if (!game.gameId || !to) return;
     try {
-      const v = await advanceNight(game.gameId);
+      if (tools.length) {
+        const v0 = await selectCarry(game.gameId, tools);
+        game.notify(v0);
+      }
+      const v = to === "night" ? await startNight(game.gameId) : await startDay(game.gameId);
       game.notify(v);
     } catch {
-      setActErr("Kon de nacht niet doorlopen.");
+      setActErr("Kon de ronde niet starten.");
     }
+  }
+
+  async function doReplay() {
+    if (!game.gameId) return;
+    try {
+      const v = await resetToLobby(game.gameId);
+      game.notify(v); // broadcast so every phone leaves the win/lose screen
+    } catch {
+      setActErr("Kon niet herstarten — probeer opnieuw.");
+    }
+  }
+
+  // Choosing an option: fight options start the shared dice hunt (unless quick
+  // resolve / reduced motion is on); everything else resolves immediately.
+  function chooseOption(i: number) {
+    if (!myPlayer?.active || !view) return;
+    const opt = cardOf(myPlayer.active).options[i];
+    if (opt?.fight == null) {
+      dispatch({ type: "RESOLVE", playerId: meId, optionIndex: i });
+      return;
+    }
+    if (getQuickHunt() || prefersReducedMotion()) {
+      const outcome = weaponStrength(view) >= opt.fight ? "win" : "lose";
+      dispatch({ type: "RESOLVE_HUNT", playerId: meId, optionIndex: i, outcome });
+      return;
+    }
+    dispatch({ type: "START_HUNT", playerId: meId, optionIndex: i });
+  }
+
+  // The hunt lives in shared state; the current-turn player's roll carries the
+  // dice so every peer reduces the same result.
+  function rollHunt(dice: [number, number]) {
+    const h = view?.hunt;
+    if (!game.gameId || !h) return;
+    dispatch({ type: "HUNT_ROLL", playerId: h.order[h.turn], seq: h.seq, dice });
+  }
+
+  function fleeHunt() {
+    if (view?.hunt) dispatch({ type: "HUNT_FLEE", playerId: meId });
+  }
+
+  function dismissHunt() {
+    if (view?.hunt?.done) dispatch({ type: "HUNT_DISMISS", playerId: meId });
+  }
+
+  // Picking a night card sets it aside instead of showing an action — confirm it
+  // so the card doesn't seem to vanish.
+  function pickCard(inst: string) {
+    const c = cardOf(inst);
+    dispatch({ type: "PICK", playerId: meId, cardId: inst });
+    if (c.night) setNightNote(c.title);
+  }
+
+  function changeDifficulty(d: Difficulty) {
+    dispatch({ type: "SET_DIFFICULTY", difficulty: d });
   }
 
   if (game.loading) return <Centered>Laden…</Centered>;
@@ -159,6 +243,11 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
             ))}
           </ul>
         </div>
+        <DifficultyPicker
+          value={view?.difficulty ?? "normal"}
+          canEdit={isHost}
+          onChange={changeDifficulty}
+        />
         {isHost ? (
           <button onClick={() => game.gameId && startGame(game.gameId)} className="btn-pop bg-[var(--color-moss-300)]">
             🔥 Start het avontuur
@@ -168,6 +257,7 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
             Wachten tot de host start…
           </p>
         )}
+        <HowToPlayButton label="📖 Nieuw? Bekijk de uitleg" />
       </main>
     );
   }
@@ -185,11 +275,11 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
           <span className="text-stroke rounded-full border-2 border-[var(--color-ink)] bg-[var(--color-clay-200)] px-3 py-0.5 text-sm font-extrabold">
             {view.phase === "night" ? `🌙 Nacht ${view.day}` : `☀️ Dag ${view.day}`}
           </span>
-          <SoundMenu />
+          <SoundMenu showQuickHunt />
         </div>
         <CavePainting painting={view.painting} goal={view.paintingGoal} />
         <ResourceBar stock={view.stock} tribe={view.tribe} size="sm" />
-        <ToolShelf tools={view.tools} compact />
+        <ToolShelf tools={view.tools} active={view.activeTools} compact />
         <SkullTrack skulls={view.skulls} limit={view.skullLimit} size="sm" />
       </section>
 
@@ -199,27 +289,22 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
         </div>
       )}
 
+      {nightNote && (
+        <div className="card-pop border-[var(--color-ink)] bg-[var(--color-clay-100)] p-2 text-center text-sm font-bold text-[var(--color-stone-700)]">
+          🌙 “{nightNote}” bewaard voor de nacht — wordt automatisch uitgevoerd.
+        </div>
+      )}
+
       {finished ? (
         view.phase === "won" ? (
-          <WinScreen day={view.day} canReplay={isHost} onReplay={() => game.gameId && resetToLobby(game.gameId)} />
+          <WinScreen day={view.day} canReplay={isHost} onReplay={doReplay} />
         ) : (
-          <LoseScreen day={view.day} canReplay={isHost} onReplay={() => game.gameId && resetToLobby(game.gameId)} />
+          <LoseScreen day={view.day} canReplay={isHost} onReplay={doReplay} />
         )
-      ) : view.phase === "night" ? (
-        <section className="card-pop flex flex-col items-center gap-3 p-5 text-center">
-          <span className="text-4xl anim-flicker" aria-hidden>
-            🌙🔥
-          </span>
-          <h2 className="text-xl font-extrabold">Nacht {view.day}</h2>
-          <ul className="text-sm font-semibold text-[var(--color-stone-700)]">
-            {view.log.filter((l) => l.day === view.day).slice(-4).map((l, i) => (
-              <li key={i}>{l.text}</li>
-            ))}
-          </ul>
-          <button onClick={doNextDay} className="btn-pop bg-[var(--color-ochre-400)] text-white">
-            ☀️ Begin dag {view.day + 1}
-          </button>
-        </section>
+      ) : view.transition ? (
+        <CarryScreen state={view} isHost={isHost} onConfirm={confirmTransition} />
+      ) : view.hunt ? (
+        <HuntArena state={view} meId={meId} isHost={isHost} onRoll={rollHunt} onFlee={fleeHunt} onDismiss={dismissHunt} />
       ) : !myPlayer ? (
         <Centered>Je kijkt mee met deze ronde.</Centered>
       ) : myPlayer.active ? (
@@ -231,7 +316,7 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
             card={cardOf(myPlayer.active)}
             state={view}
             interactive
-            onResolve={(i) => dispatch({ type: "RESOLVE", playerId: meId, optionIndex: i })}
+            onResolve={chooseOption}
             onGiveUp={() => dispatch({ type: "GIVE_UP", playerId: meId })}
           />
         </div>
@@ -246,7 +331,7 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
               <CardBack
                 key={inst}
                 hint={cardOf(inst).hint}
-                onClick={() => dispatch({ type: "PICK", playerId: meId, cardId: inst })}
+                onClick={() => pickCard(inst)}
               />
             ))}
           </div>

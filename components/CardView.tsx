@@ -36,6 +36,7 @@ function costChips(cost?: Cost): string[] {
   if (cost.flint) out.push(`${cost.flint}${RES_META.flint.emoji}`);
   if (cost.food) out.push(`${cost.food}${RES_META.food.emoji}`);
   if (cost.ideas) out.push(`${cost.ideas}${RES_META.ideas.emoji}`);
+  if (cost.bones) out.push(`${cost.bones}${RES_META.bones.emoji}`);
   return out;
 }
 
@@ -46,6 +47,7 @@ function rewardChips(reward?: Reward): string[] {
   if (reward.flint) out.push(`${reward.flint}${RES_META.flint.emoji}`);
   if (reward.food) out.push(`${reward.food}${RES_META.food.emoji}`);
   if (reward.ideas) out.push(`${reward.ideas}${RES_META.ideas.emoji}`);
+  if (reward.bones) out.push(`${reward.bones}${RES_META.bones.emoji}`);
   if (reward.tribe) out.push(`${reward.tribe}${TRIBE}`);
   if (reward.painting) out.push(`${reward.painting}${PAINTING}`);
   if (reward.tools) for (const t of reward.tools) out.push(`${TOOLS[t].emoji}${TOOLS[t].name}`);

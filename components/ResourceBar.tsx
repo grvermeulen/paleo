@@ -1,3 +1,7 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import type { Stock } from "@/lib/engine";
 import { RES_META, TRIBE } from "@/lib/paleo/display";
 
@@ -19,19 +23,46 @@ export default function ResourceBar({
     { key: "flint", emoji: RES_META.flint.emoji, value: stock.flint },
     { key: "food", emoji: RES_META.food.emoji, value: stock.food },
     { key: "ideas", emoji: RES_META.ideas.emoji, value: stock.ideas },
+    { key: "bones", emoji: RES_META.bones.emoji, value: stock.bones },
     { key: "tribe", emoji: TRIBE, value: tribe },
   ];
   return (
     <div className="flex flex-wrap items-center justify-center gap-2">
       {items.map((it) => (
-        <span
-          key={it.key}
-          className={`inline-flex items-center gap-1 rounded-full border-2 border-[var(--color-ink)] bg-white/70 font-extrabold ${text} ${pad}`}
-        >
-          <span aria-hidden>{it.emoji}</span>
-          <span className="tabular-nums">{it.value}</span>
-        </span>
+        <Pill key={it.key} emoji={it.emoji} value={it.value} text={text} pad={pad} />
       ))}
     </div>
+  );
+}
+
+/** One stat chip that pops briefly whenever its value changes (loot landing). */
+function Pill({ emoji, value, text, pad }: { emoji: string; value: number; text: string; pad: string }) {
+  const prev = useRef(value);
+  const [bump, setBump] = useState<"up" | "down" | null>(null);
+
+  useEffect(() => {
+    if (prev.current !== value) {
+      setBump(value > prev.current ? "up" : "down");
+      prev.current = value;
+      const t = setTimeout(() => setBump(null), 320);
+      return () => clearTimeout(t);
+    }
+  }, [value]);
+
+  return (
+    <motion.span
+      animate={bump ? { scale: [1, 1.35, 1] } : { scale: 1 }}
+      transition={{ duration: 0.32 }}
+      className={`inline-flex items-center gap-1 rounded-full border-2 font-extrabold ${text} ${pad} ${
+        bump === "up"
+          ? "border-[var(--color-moss-500)] bg-[var(--color-moss-300)]/40"
+          : bump === "down"
+            ? "border-[var(--color-ember)] bg-[var(--color-ember)]/15"
+            : "border-[var(--color-ink)] bg-white/70"
+      }`}
+    >
+      <span aria-hidden>{emoji}</span>
+      <span className="tabular-nums">{value}</span>
+    </motion.span>
   );
 }

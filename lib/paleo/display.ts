@@ -12,11 +12,12 @@ export const HINT_META: Record<Hint, { emoji: string; label: string; color: stri
   danger: { emoji: "⚠️", label: "Gevaar", color: "#e2542c" },
 };
 
-export const RES_META: Record<Resource | "ideas", { emoji: string; label: string }> = {
+export const RES_META: Record<Resource | "ideas" | "bones", { emoji: string; label: string }> = {
   wood: { emoji: "🪵", label: "Hout" },
   flint: { emoji: "🔪", label: "Vuursteen" },
   food: { emoji: "🍖", label: "Voedsel" },
   ideas: { emoji: "💡", label: "Ideeën" },
+  bones: { emoji: "🦴", label: "Botten" },
 };
 
 export const SKULL = "💀";

@@ -10,7 +10,8 @@ import {
   makeInstances,
   dealDecks,
 } from "./engine";
-import { DEFAULT_MISSION, buildPool } from "./paleo/missions";
+import { DEFAULT_MISSION, MISSIONS, buildPool, buildNightPool } from "./paleo/missions";
+import type { ToolId } from "./paleo/cards";
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ"; // no I/O for readability
 const MAX_PLAYERS = 4;
@@ -141,15 +142,19 @@ export async function startGame(gameId: string): Promise<void> {
     if (attempt > 0) await sleep(Math.min(80 * 2 ** (attempt - 1), 1000));
     const { data: row, error: readErr } = await supabase
       .from("paleo_games")
-      .select("version,status")
+      .select("version,status,state")
       .eq("id", gameId)
       .single();
     if (readErr || !row) throw readErr ?? new Error("Spel niet gevonden.");
     if (row.status !== "lobby") return; // already started
 
+    // Carry the difficulty chosen in the lobby into the started game.
+    const lobbyDifficulty = (row.state as GameState | null)?.difficulty ?? "normal";
+    const started = { ...s, difficulty: lobbyDifficulty };
+
     const { data: updated, error } = await supabase
       .from("paleo_games")
-      .update({ state: s, status: "playing", version: row.version + 1 })
+      .update({ state: started, status: "playing", version: row.version + 1 })
       .eq("id", gameId)
       .eq("version", row.version)
       .select("id");
@@ -215,7 +220,12 @@ export async function applyAction(
  * redealt — so this reads state inside the version-guarded loop to deal from the
  * authoritative pile.
  */
-export async function advanceNight(gameId: string): Promise<number> {
+/**
+ * Confirm a day↔night transition and deal the next round's decks. `to` decides
+ * the pool (night-pool vs day-pool) and the action; the deck shuffle happens
+ * here (caller-side randomness) inside the version-guarded loop.
+ */
+async function startRound(gameId: string, to: "night" | "day"): Promise<number> {
   const MAX_ATTEMPTS = 8;
   let lastError: unknown = null;
 
@@ -232,10 +242,14 @@ export async function advanceNight(gameId: string): Promise<number> {
       continue;
     }
     const state = data.state as GameState;
-    if (state.phase !== "night") return data.version; // already advanced
+    if (state.transition?.to !== to) return data.version; // already started
 
-    const decks = dealDecks(state.discard, state.players.length);
-    const next = reduce(state, { type: "ADVANCE_NIGHT", decks });
+    const mission = MISSIONS[state.missionId] ?? DEFAULT_MISSION;
+    const pool = to === "night" ? buildNightPool(mission) : buildPool(mission);
+    const decks = dealDecks(makeInstances(pool), state.players.length);
+    const action: Action =
+      to === "night" ? { type: "START_NIGHT", decks } : { type: "START_DAY", decks };
+    const next = reduce(state, action);
     const nextVersion = data.version + 1;
     const { data: updated, error: upErr } = await supabase
       .from("paleo_games")
@@ -255,7 +269,17 @@ export async function advanceNight(gameId: string): Promise<number> {
   }
   throw lastError instanceof Error
     ? lastError
-    : new Error("Kon de nacht niet doorlopen — probeer opnieuw.");
+    : new Error("Kon de ronde niet starten — probeer opnieuw.");
+}
+
+/** Pack up and head into the night round. */
+export const startNight = (gameId: string) => startRound(gameId, "night");
+/** Pack up and start the new day. */
+export const startDay = (gameId: string) => startRound(gameId, "day");
+
+/** Choose which tools to carry across a transition (≤ CARRY_MAX). */
+export async function selectCarry(gameId: string, tools: ToolId[]): Promise<number> {
+  return applyAction(gameId, { type: "SELECT_CARRY", tools });
 }
 
 /** Refresh a player's presence heartbeat. */
@@ -270,8 +294,13 @@ export async function touchPresence(
     .eq("player_id", playerId);
 }
 
-/** Reset a finished game back to the lobby so the same group can replay. */
-export async function resetToLobby(gameId: string): Promise<void> {
+/**
+ * Reset a finished game back to the lobby so the same group can replay. Returns
+ * the new (or current, if already in the lobby) version so the caller can
+ * broadcast a `notify` ping — otherwise peers stuck on the win/lose screen,
+ * whose version-poll is paused while the game is "finished", never refresh.
+ */
+export async function resetToLobby(gameId: string): Promise<number> {
   for (let attempt = 0; attempt < 6; attempt++) {
     if (attempt > 0) await sleep(Math.min(80 * 2 ** (attempt - 1), 1000));
     const { data: row, error: readErr } = await supabase
@@ -280,19 +309,21 @@ export async function resetToLobby(gameId: string): Promise<void> {
       .eq("id", gameId)
       .single();
     if (readErr || !row) throw readErr ?? new Error("Spel niet gevonden.");
-    if (row.status === "lobby") return;
+    if (row.status === "lobby") return row.version;
 
+    const nextVersion = row.version + 1;
     const { data: updated, error } = await supabase
       .from("paleo_games")
       .update({
         state: createLobbyState(DEFAULT_MISSION.id),
         status: "lobby",
-        version: row.version + 1,
+        version: nextVersion,
       })
       .eq("id", gameId)
       .eq("version", row.version)
       .select("id");
     if (error) throw error;
-    if ((updated?.length ?? 0) > 0) return;
+    if ((updated?.length ?? 0) > 0) return nextVersion;
   }
+  throw new Error("Kon het spel niet herstarten — probeer opnieuw.");
 }

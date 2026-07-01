@@ -19,7 +19,11 @@ export type Sfx =
   | "night"
   | "dawn"
   | "win"
-  | "lose";
+  | "lose"
+  // Transient mini-game cues, played directly from HuntMiniGame (not via the
+  // engine's lastEvent), so the version-keyed GameSounds dedup is unaffected.
+  | "hit"
+  | "dodge";
 
 export interface SoundSettings {
   muted: boolean;
@@ -359,6 +363,13 @@ class SoundManager {
         this.glide(330, 110, t, 0.9, 0.26, m);
         this.bell(146.83, t + 0.2, 1.4, 0.16, m, 0.85);
         break;
+      case "hit":
+        this.clack(t, 900, 0.14);
+        this.bell(196, t, 0.22, 0.24, m, 0.45);
+        break;
+      case "dodge":
+        this.glide(320, 760, t, 0.16, 0.18, m);
+        break;
     }
   }
 
@@ -460,6 +471,14 @@ export function playEventSfx(event: GameEvent): void {
     case "lose":
       sound.play("lose");
       sound.vibrate([0, 120, 60, 200]);
+      break;
+    case "hit":
+      sound.play("hit");
+      sound.vibrate([0, 40, 30, 40]);
+      break;
+    case "dodge":
+      sound.play("dodge");
+      sound.vibrate(20);
       break;
   }
 }
